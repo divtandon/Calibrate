@@ -460,6 +460,13 @@ def _sidebar() -> None:
             console.clear()
             await _print("ERROR: ANTHROPIC_API_KEY not set - see .env.example", "cal-console-line err")
             return
+        if not (prompt.value or "").strip():
+            console.clear()
+            await _print(
+                'ERROR: type a prompt first, e.g. "generate a dbt model for monthly revenue by region"',
+                "cal-console-line err",
+            )
+            return
         console.clear()
         loop = asyncio.get_event_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -494,16 +501,19 @@ def _sidebar() -> None:
                 await _print(text, cls)
                 await asyncio.sleep(0.12)
         except Exception as exc:  # noqa: BLE001 - surfaced to the console, not swallowed
+            from agent.core import friendly_agent_error
+
             await queue.put(None)
             if not consumer_task.done():
                 await consumer_task
-            await _print(f"ERROR: {exc}", "cal-console-line err")
+            await _print(f"ERROR: {friendly_agent_error(exc)}", "cal-console-line err")
         _catalog_list.refresh("")
         _main_panel.refresh()
 
-    ui.button("Generate + Validate", on_click=do_generate).props("unelevated").classes("w-full").style(
+    generate_btn = ui.button("Generate + Validate", on_click=do_generate).props("unelevated").classes("w-full").style(
         f"background:{ACCENT}; color:#04120c; font-weight:700; font-size:13px;"
     )
+    generate_btn.bind_enabled_from(prompt, "value", backward=lambda v: bool(v and v.strip()))
 
     ui.separator().style(f"background:{PANEL_BORDER};")
 

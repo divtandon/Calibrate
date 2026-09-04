@@ -58,10 +58,19 @@ def cmd_baseline(args: argparse.Namespace) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> None:
-    from agent.core import generate_model
+    from agent.core import friendly_agent_error, generate_model
+
+    if not args.prompt.strip():
+        print('[generate] ERROR: prompt is empty - e.g. python -m cli.demo generate '
+              '"generate a dbt model for monthly revenue by region"')
+        sys.exit(1)
 
     print(f"[generate] prompt: {args.prompt!r}")
-    result = generate_model(args.prompt)
+    try:
+        result = generate_model(args.prompt)
+    except Exception as exc:  # noqa: BLE001 - translated to an actionable message below
+        print(f"[generate] ERROR: {friendly_agent_error(exc)}")
+        sys.exit(1)
     print(f"[generate] saved {result.model_name}.sql to examples/ after {result.turns} turn(s), "
           f"{len(result.tool_calls)} governed tool call(s):")
     for call in result.tool_calls:

@@ -27,6 +27,22 @@ _MODEL = os.environ.get("CALIBRATE_MODEL", "claude-sonnet-5")
 _MAX_TURNS = 8
 
 
+def friendly_agent_error(exc: Exception) -> str:
+    """Translate the exceptions generate_model() actually raises (mostly
+    anthropic.APIError subclasses) into an actionable one-liner instead of
+    a raw API error JSON blob. Shared by cli/demo.py and dashboard/app.py
+    so the two surfaces give identical guidance.
+    """
+    message = str(exc)
+    if "credit balance is too low" in message:
+        return "the Anthropic account has no API credit left - add credits at console.anthropic.com/settings/billing"
+    if "authentication" in message.lower() or "invalid x-api-key" in message.lower() or "401" in message:
+        return "ANTHROPIC_API_KEY looks invalid - double-check it in .env"
+    if "rate limit" in message.lower() or "429" in message:
+        return "hit the Anthropic API rate limit - wait a moment and try again"
+    return str(exc)
+
+
 @dataclass
 class GenerationResult:
     sql: str
