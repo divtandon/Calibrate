@@ -151,13 +151,34 @@ def _inject_style() -> None:
 
       .cal-particle {{
         position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
-        animation-name: cal-float; animation-timing-function: ease-in-out; animation-iteration-count: infinite;
+        animation-timing-function: ease-in-out; animation-iteration-count: infinite;
       }}
-      @keyframes cal-float {{
+      /* Several distinct drift paths, randomly assigned per particle, so a
+         larger field doesn't read as one shape repeated with a time offset. */
+      @keyframes cal-float-a {{
         0%   {{ transform: translate(0,0); }}
         25%  {{ transform: translate(26px,-34px); }}
         50%  {{ transform: translate(-16px,-62px); }}
         75%  {{ transform: translate(-34px,-18px); }}
+        100% {{ transform: translate(0,0); }}
+      }}
+      @keyframes cal-float-b {{
+        0%   {{ transform: translate(0,0) scale(1); }}
+        30%  {{ transform: translate(-38px,-20px) scale(1.15); }}
+        60%  {{ transform: translate(20px,-48px) scale(0.9); }}
+        100% {{ transform: translate(0,0) scale(1); }}
+      }}
+      @keyframes cal-float-c {{
+        0%   {{ transform: translate(0,0); }}
+        20%  {{ transform: translate(14px,18px); }}
+        50%  {{ transform: translate(44px,-8px); }}
+        80%  {{ transform: translate(10px,-40px); }}
+        100% {{ transform: translate(0,0); }}
+      }}
+      @keyframes cal-float-d {{
+        0%   {{ transform: translate(0,0); }}
+        33%  {{ transform: translate(-46px,10px); }}
+        66%  {{ transform: translate(-12px,52px); }}
         100% {{ transform: translate(0,0); }}
       }}
 
@@ -223,24 +244,26 @@ def load_audit(limit: int = 40) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------- app --
 
-def _particle_field(n: int = 16) -> None:
+def _particle_field(n: int = 46) -> None:
     import random
 
     random.seed(7)  # stable across reloads - motion without visual jitter on refresh
-    colors = [ACCENT, TEAL, VIOLET]
+    colors = [ACCENT, TEAL, VIOLET, AMBER]
+    paths = ["cal-float-a", "cal-float-b", "cal-float-c", "cal-float-d"]
     parts = ['<div class="cal-bg"></div><div class="cal-scanline"></div>']
     for i in range(n):
-        size = random.randint(3, 7)
-        left = random.uniform(2, 96)
-        top = random.uniform(6, 92)
+        size = random.uniform(2, 8)
+        left = random.uniform(1, 98)
+        top = random.uniform(4, 95)
         color = random.choice(colors)
-        dur = random.uniform(14, 26)
-        delay = random.uniform(0, 10)
-        opacity = random.uniform(0.25, 0.55)
+        path = random.choice(paths)
+        dur = random.uniform(12, 30)
+        delay = random.uniform(0, 20)
+        opacity = random.uniform(0.18, 0.6)
         parts.append(
-            f'<div class="cal-particle" style="left:{left}vw; top:{top}vh; width:{size}px; height:{size}px; '
-            f'background:{color}; opacity:{opacity}; animation-duration:{dur}s; animation-delay:-{delay}s; '
-            f'box-shadow:0 0 {size * 2}px {color};"></div>'
+            f'<div class="cal-particle" style="left:{left:.2f}vw; top:{top:.2f}vh; width:{size:.1f}px; height:{size:.1f}px; '
+            f'background:{color}; opacity:{opacity:.2f}; animation-name:{path}; animation-duration:{dur:.1f}s; '
+            f'animation-delay:-{delay:.1f}s; box-shadow:0 0 {size * 2:.0f}px {color};"></div>'
         )
     ui.html("".join(parts))
 
@@ -1111,6 +1134,18 @@ def _drift_chart(report: dict[str, Any]) -> None:
             "type": "category", "data": periods, "boundaryGap": False,
             "axisLine": {"lineStyle": {"color": PANEL_BORDER}},
             "axisLabel": {"color": MUTED, "fontSize": 11},
+            # The crosshair: hover anywhere on the plot and this line
+            # snaps to the nearest real data point (not just where the
+            # cursor happens to be) - same interaction as a stock/currency
+            # chart's hover-scrub.
+            "axisPointer": {
+                "type": "line", "snap": True, "z": 0,
+                "lineStyle": {"color": TEAL, "width": 1, "type": "dashed"},
+                "label": {
+                    "show": True, "backgroundColor": PANEL_2, "color": TEXT,
+                    "borderColor": PANEL_BORDER, "borderWidth": 1, "fontSize": 11,
+                },
+            },
         },
         "yAxis": {
             "type": "value",
@@ -1122,7 +1157,12 @@ def _drift_chart(report: dict[str, Any]) -> None:
             "splitLine": {"lineStyle": {"color": PANEL_BORDER}},
             "axisLabel": {"color": MUTED, "fontSize": 11},
         },
-        "tooltip": {"trigger": "axis", "backgroundColor": PANEL, "borderColor": PANEL_BORDER, "textStyle": {"color": TEXT}},
+        "tooltip": {
+            "trigger": "axis",
+            "backgroundColor": PANEL, "borderColor": PANEL_BORDER, "textStyle": {"color": TEXT},
+            "axisPointer": {"type": "line", "snap": True},
+            "confine": True,
+        },
         "series": [
             {
                 "name": "Historical baseline",
