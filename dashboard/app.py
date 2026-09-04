@@ -506,9 +506,11 @@ def _pipeline_diagram() -> None:
     AGENT jumps to the generation box, VALIDATION and GOVERNANCE scroll to
     the matching section of whatever's on screen.
     """
+    provider = os.environ.get("CALIBRATE_LLM_PROVIDER", "anthropic").lower()
+    agent_sub = "gemini tool-use" if provider == "gemini" else "claude tool-use"
     nodes = [
         ("SOURCE", "TPC-H SF1", ACCENT, "storage", _show_source_dialog),
-        ("AGENT", "claude tool-use", VIOLET, "smart_toy", focus_prompt_box),
+        ("AGENT", agent_sub, VIOLET, "smart_toy", focus_prompt_box),
         ("MCP TOOLS", "governed", TEAL, "hub", _show_mcp_dialog),
         ("VALIDATION", "baseline_check", AMBER, "fact_check", lambda: scroll_to(state.get("checks_anchor"))),
         ("GOVERNANCE", "audit_log.db", ACCENT, "shield", lambda: scroll_to(state.get("governance_anchor"))),
@@ -610,9 +612,11 @@ def _sidebar() -> None:
         return lines
 
     async def do_generate() -> None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        provider = os.environ.get("CALIBRATE_LLM_PROVIDER", "anthropic").lower()
+        required_key = "GEMINI_API_KEY" if provider == "gemini" else "ANTHROPIC_API_KEY"
+        if not os.environ.get(required_key):
             console.clear()
-            await _print("ERROR: ANTHROPIC_API_KEY not set - see .env.example", "cal-console-line err")
+            await _print(f"ERROR: {required_key} not set - see .env.example", "cal-console-line err")
             return
         if not (prompt.value or "").strip():
             console.clear()
@@ -867,20 +871,20 @@ def _main_panel() -> None:
 
     _run_summary_panel(run, report)
 
-    with ui.row().classes("w-full no-wrap").style("gap:16px;"):
+    with ui.row().classes("w-full no-wrap").style("gap:20px;"):
         _stat_tile("ROW COUNT DELTA", report.get("row_count_delta_pct"), "pct", 0.25, "rows/period, recent vs historical")
         _stat_tile("NULL RATE VARIANCE", report.get("null_rate_variance"), "pct", 0.02, "missing values, recent vs historical")
         _stat_tile("DISTRIBUTION DRIFT", report.get("distribution_drift_sigma"), "sigma", 3.0, "z-score vs baseline mean")
-        with ui.column().classes("cal-panel").style("padding:18px; gap:4px; min-width:220px;"):
-            ui.label("RECONCILIATION").style(f"font-size:12px; color:{MUTED}; letter-spacing:.06em; font-weight:700;")
+        with ui.column().classes("cal-panel").style("padding:26px; gap:6px; min-width:250px; flex:1;"):
+            ui.label("RECONCILIATION").style(f"font-size:13px; color:{MUTED}; letter-spacing:.06em; font-weight:700;")
             delta = report.get("reconciliation_delta_pct")
             color = DANGER if (delta or 0) > 0.005 else ACCENT
             value_label = ui.label("0.00%" if delta is not None else "skipped").style(
-                f"font-size:27px; font-weight:800; color:{color};"
+                f"font-size:38px; font-weight:800; color:{color};"
             )
             if delta is not None:
                 count_up(value_label, delta * 100, "pct")
-            ui.label("model total vs independent control sum").style(f"font-size:11px; color:{MUTED};")
+            ui.label("model total vs independent control sum").style(f"font-size:12.5px; color:{MUTED};")
 
     checks_label = ui.label("THE THREE CHECKS").classes("cal-display").style(
         f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em; margin-top:4px;"
@@ -961,18 +965,18 @@ def _main_panel() -> None:
 def _stat_tile(label: str, raw_value: Optional[float], mode: str, threshold: float, subtitle: str = "") -> None:
     flagged = raw_value is not None and abs(raw_value) > threshold
     color = DANGER if flagged else ACCENT
-    with ui.column().classes("cal-panel").style("padding:18px; gap:4px; min-width:220px;"):
-        ui.label(label).style(f"font-size:12px; color:{MUTED}; letter-spacing:.06em; font-weight:700;")
+    with ui.column().classes("cal-panel").style("padding:26px; gap:6px; min-width:250px; flex:1;"):
+        ui.label(label).style(f"font-size:13px; color:{MUTED}; letter-spacing:.06em; font-weight:700;")
         placeholder = "—" if raw_value is None else ("0.00%" if mode == "pct" else "0.00σ")
-        value_label = ui.label(placeholder).style(f"font-size:27px; font-weight:800; color:{color};")
+        value_label = ui.label(placeholder).style(f"font-size:38px; font-weight:800; color:{color};")
         if raw_value is not None:
             count_up(value_label, raw_value * 100 if mode == "pct" else raw_value, mode)
         if flagged:
             badge("FLAGGED", "#2a0a10", DANGER)
         elif subtitle:
-            ui.label(subtitle).style(f"font-size:11px; color:{MUTED};")
+            ui.label(subtitle).style(f"font-size:12.5px; color:{MUTED};")
         else:
-            ui.label("within tolerance").style(f"font-size:12px; color:{MUTED};")
+            ui.label("within tolerance").style(f"font-size:13px; color:{MUTED};")
 
 
 def _check_card(icon: str, title: str, passed: bool, description: str) -> None:
