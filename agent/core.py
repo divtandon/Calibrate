@@ -29,7 +29,7 @@ from mcp_server import tools as t
 load_dotenv()
 
 _ANTHROPIC_MODEL = os.environ.get("CALIBRATE_MODEL", "claude-sonnet-5")
-_GEMINI_MODEL = os.environ.get("CALIBRATE_GEMINI_MODEL", "gemini-flash-latest")
+_GEMINI_MODEL = os.environ.get("CALIBRATE_GEMINI_MODEL", "gemini-flash-lite-latest")
 _MAX_TURNS = 8
 _GEMINI_MAX_RETRIES = 3
 

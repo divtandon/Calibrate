@@ -7,6 +7,7 @@ checkpoint calls on both the correct model and the deliberately-broken one.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from db.connection import get_backend
@@ -21,9 +22,9 @@ from validation.baseline_check import check_model_output
 def reference_orders_revenue_total() -> float:
     """Independent control total: SUM(o_totalprice) for every order that
     resolves through customer -> nation -> region, with no join to
-    lineitem. Any correct 'revenue by region' style model's grand total
-    must reconcile to this number, regardless of how it buckets by
-    region/month - a fan-out join (e.g. via lineitem) will not.
+    lineitem. Any correct revenue-sum model's grand total must reconcile
+    to this number, regardless of how it buckets by dimension/period - a
+    fan-out join (e.g. via lineitem) will not.
     """
     backend = get_backend()
     sql = f"""
@@ -35,6 +36,41 @@ def reference_orders_revenue_total() -> float:
     """
     _, rows = backend.execute(sql)
     return float(rows[0][0])
+
+
+def reference_orders_count() -> float:
+    """Independent control total for a COUNT-type metric: the real number
+    of orders that resolve through customer -> nation -> region. A
+    correct 'order count by X' model's grand total (summed across every
+    dimension/period bucket) must equal this - a fan-out join would
+    inflate it the same way it inflates a revenue sum.
+    """
+    backend = get_backend()
+    sql = f"""
+        SELECT COUNT(*)
+        FROM {backend.qualify('orders')} o
+        JOIN {backend.qualify('customer')} c ON o.o_custkey = c.c_custkey
+        JOIN {backend.qualify('nation')} n ON c.c_nationkey = n.n_nationkey
+        JOIN {backend.qualify('region')} r ON n.n_regionkey = r.r_regionkey
+    """
+    _, rows = backend.execute(sql)
+    return float(rows[0][0])
+
+
+def _detect_metric_aggregation(resolved_sql: str, metric_col: str) -> Optional[str]:
+    """Reconciliation only makes sense when the reference total is the same
+    kind of quantity as the model's metric - comparing a COUNT against a
+    SUM-of-revenue reference is comparing apples to oranges, not catching a
+    real bug (this is exactly what happened validating a real agent-
+    generated "total order count by nation" model: its count of 1,500,000
+    was actually correct, but got flagged as a 400%+ "mismatch" against the
+    revenue reference). Sniff the aggregation function wrapping the column
+    aliased as metric_col directly out of the resolved SQL so the right
+    reference gets used instead.
+    """
+    pattern = rf"(sum|count|avg|min|max)\s*\([^()]*\)\s*as\s+{re.escape(metric_col)}\b"
+    match = re.search(pattern, resolved_sql, re.IGNORECASE | re.DOTALL)
+    return match.group(1).lower() if match else None
 
 
 def run_and_report(
@@ -59,7 +95,17 @@ def run_and_report(
     # rows, not a join fan-out. Skip the check rather than report a
     # misleading reason.
     truncated = exec_result.get("truncated", False)
-    reference_total = reference_orders_revenue_total() if (use_reconciliation and not truncated) else None
+    reference_total: Optional[float] = None
+    aggregation = None
+    if use_reconciliation and not truncated:
+        aggregation = _detect_metric_aggregation(exec_result["resolved_sql"], metric_col)
+        if aggregation == "sum":
+            reference_total = reference_orders_revenue_total()
+        elif aggregation == "count":
+            reference_total = reference_orders_count()
+        # avg/min/max/unrecognized: no simple additive grand-total invariant
+        # exists for those, so reconciliation is skipped rather than
+        # compared against a reference that doesn't actually apply.
 
     result = check_model_output(
         columns=columns,
@@ -88,6 +134,7 @@ def run_and_report(
         "metric_col": metric_col,
         "dimension_cols": dimension_cols,
         "source_note": source_note,
+        "metric_aggregation": aggregation,
         **result.to_dict(),
     }
     results_store.save_run(model_name, sql_path or "", result.verdict, result.flags, report)

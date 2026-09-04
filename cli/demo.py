@@ -173,9 +173,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("validate", help="Run baseline_check against a generated model's SQL file")
     p.add_argument("sql_path")
     p.add_argument("--model-name")
+    # Defaults match agent/prompts.py's fixed output contract (dimension /
+    # order_month / metric_value) - override these for a pre-built registry
+    # example, which uses its own real column names (see examples/registry.py).
     p.add_argument("--period-col", default="order_month")
-    p.add_argument("--metric-col", default="total_revenue")
-    p.add_argument("--dimension-cols", default="region", help="comma-separated")
+    p.add_argument("--metric-col", default="metric_value")
+    p.add_argument("--dimension-cols", default="dimension", help="comma-separated")
     p.add_argument("--no-reconciliation", action="store_true")
     p.set_defaults(func=cmd_validate)
 
