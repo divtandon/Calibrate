@@ -25,6 +25,14 @@ load_dotenv()
 
 
 def cmd_setup(args: argparse.Namespace) -> None:
+    import os
+
+    if os.environ.get("CALIBRATE_BACKEND", "duckdb") == "duckdb":
+        from scripts.setup_local_data import main as setup_local_data
+
+        setup_local_data()
+        print()
+
     from db.connection import get_backend
 
     backend = get_backend()

@@ -68,21 +68,34 @@ class DuckDBBackend(DataBackend):
 
         self._duckdb = duckdb
         self.path = path or os.environ.get("DUCKDB_PATH", "data/calibrate.duckdb")
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._conn = duckdb.connect(self.path)
-        self._ensure_data()
 
-    def _ensure_data(self) -> None:
+        if not Path(self.path).exists():
+            raise RuntimeError(
+                f"No local TPC-H data at '{self.path}' yet. Run `python scripts/setup_local_data.py` once "
+                "(or `python -m cli.demo setup`) before connecting - see PROJECT_SPEC.md Phase 0."
+            )
+
+        self._lock = threading.Lock()
+        # Read-only by design: the runtime path (CLI, dashboard, MCP tools,
+        # validation) never writes to the source dataset. Exactly one
+        # process - scripts/setup_local_data.py - owns generating it. This
+        # also means any number of Calibrate processes can open this file
+        # concurrently without racing each other, which a writable
+        # lazy-generate-on-connect approach could not guarantee.
+        self._conn = duckdb.connect(self.path, read_only=True)
+        self._verify_data()
+
+    def _verify_data(self) -> None:
         existing = self._conn.execute(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = 'tpch_sf1'"
         ).fetchall()
         have = {r[0] for r in existing}
-        if have.issuperset(set(TPCH_TABLES)):
-            return
-        self._conn.execute("INSTALL tpch; LOAD tpch;")
-        self._conn.execute("CREATE SCHEMA IF NOT EXISTS tpch_sf1;")
-        self._conn.execute("CALL dbgen(sf=1, schema='tpch_sf1');")
+        missing = set(TPCH_TABLES) - have
+        if missing:
+            raise RuntimeError(
+                f"'{self.path}' is missing TPC-H tables {sorted(missing)}. Run "
+                "`python scripts/setup_local_data.py` to (re)generate a clean dataset."
+            )
 
     def execute(self, sql: str) -> tuple[list[str], list[tuple]]:
         with self._lock:

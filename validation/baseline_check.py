@@ -172,6 +172,17 @@ def check_model_output(
                     f"{distribution_drift_sigma:+.2f} standard deviations from the baseline mean "
                     f"({baseline_stats.mean:,.2f}), threshold {Z_SCORE_THRESHOLD:.1f}σ."
                 )
+            elif distribution_drift_sigma is None and not baseline_stats.stddev and baseline_stats.mean != 0:
+                # Baseline has (near-)zero variance, so a z-score is undefined -
+                # but any real deviation from a constant baseline is still a
+                # genuine drift, not something the check should stay silent on.
+                relative_change = (recent_stats.mean - baseline_stats.mean) / abs(baseline_stats.mean)
+                if abs(relative_change) > NULL_RATE_VARIANCE_THRESHOLD:
+                    flags.append(
+                        f"distribution_drift: recent-period mean {metric_col} ({recent_stats.mean:,.2f}) differs from "
+                        f"a constant baseline mean ({baseline_stats.mean:,.2f}) by {relative_change:+.2%} - baseline "
+                        f"has ~zero variance, so any deviation is significant."
+                    )
 
     verdict = "FLAGGED" if flags else "VERIFIED"
 
