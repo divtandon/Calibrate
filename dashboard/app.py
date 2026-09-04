@@ -366,20 +366,61 @@ def _pipeline_diagram() -> None:
         ui.html("".join(parts))
 
 
+_MANUAL_OPTION = "__manual__"
+
+
+def _model_select_options() -> dict[Any, str]:
+    """Real catalog data, deduplicated to one entry per model (newest run),
+    plus a trailing 'add manually' entry - this is what backs the dropdown,
+    not a placeholder list.
+    """
+    runs = load_runs()
+    seen: dict[str, dict[str, Any]] = {}
+    for r in runs:
+        seen.setdefault(r["model_name"], r)  # newest first already
+    options: dict[Any, str] = {}
+    for name, r in seen.items():
+        mark = "✓" if r["verdict"] == "VERIFIED" else "✕"
+        options[r["id"]] = f"{mark}  {name}"
+    options[_MANUAL_OPTION] = "+  Add a model manually..."
+    return options
+
+
 def _sidebar() -> None:
     ui.label("PIPELINE CATALOG").classes("cal-display").style(f"font-size:12px; font-weight:700; color:{MUTED}; letter-spacing:.1em;")
-    search = ui.input(placeholder="Search models...").props("dense outlined dark").classes("w-full").style(
-        f"--q-primary:{ACCENT}; font-size:13px;"
-    )
-    with ui.column().style("max-height:280px; overflow-y:auto; width:100%; gap:0;"):
-        _catalog_list(search.value if search else "")
-    search.on("update:model-value", lambda e: _catalog_list.refresh(e.args or ""))
+
+    model_select = ui.select(
+        options=_model_select_options(), label="Select or search a model", with_input=True,
+    ).props("dense outlined dark").classes("w-full").style(f"--q-primary:{ACCENT}; font-size:13px;")
+
+    with ui.column().style("max-height:260px; overflow-y:auto; width:100%; gap:0;"):
+        _catalog_list()
 
     ui.separator().style(f"background:{PANEL_BORDER};")
     ui.label("NEW GENERATION").classes("cal-display").style(f"font-size:12px; font-weight:700; color:{MUTED}; letter-spacing:.1em;")
     prompt = ui.textarea(placeholder="e.g. generate a dbt model for monthly revenue by region").props(
         "dense outlined dark rows=3"
     ).classes("w-full").style("font-size:13px;")
+
+    def _on_model_select(e: Any) -> None:
+        value = e.value
+        if value == _MANUAL_OPTION or value is None:
+            model_select.set_value(None)
+            # getElement() can return either the raw DOM node or a Vue
+            # component instance (with the DOM node under .$el) depending
+            # on the element type - handle both rather than assume one.
+            ui.run_javascript(
+                f"let el = getElement({prompt.id}); "
+                f"if (el && el.$el) el = el.$el; "
+                f"if (el && typeof el.scrollIntoView === 'function') "
+                f"el.scrollIntoView({{behavior:'smooth', block:'center'}}); "
+                f"const inner = el && el.querySelector ? el.querySelector('textarea') : null; "
+                f"if (inner) inner.focus();"
+            )
+            return
+        _select_run(value)
+
+    model_select.on_value_change(_on_model_select)
 
     ui.label("LIVE RUN CONSOLE").classes("cal-display").style(f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em; margin-top:4px;")
     console = ui.column().classes("cal-console w-full")
@@ -717,17 +758,59 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
                   "axisLabel": {"color": MUTED, "fontSize": 11}},
         "yAxis": {"type": "category", "data": ["Model output", "Independent control"],
                   "axisLine": {"lineStyle": {"color": PANEL_BORDER}}, "axisLabel": {"color": MUTED, "fontSize": 12}},
-        "series": [{
-            "type": "bar", "barWidth": 28,
-            "data": [
-                {"value": round(model_total / div, 3), "itemStyle": {"color": model_color, "borderRadius": [0, 6, 6, 0]}},
-                {"value": round(reference_total / div, 3), "itemStyle": {"color": TEAL, "borderRadius": [0, 6, 6, 0]}},
-            ],
-            "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
-            "animationDuration": 1100, "animationEasing": "cubicOut",
-        }],
+        # Two single-bar series rather than one series with two data points -
+        # ui.echart passes options straight through as JSON (no JS callback
+        # support, see _drift_chart's y-axis formatter fix above for the
+        # same lesson learned the first time), so a real per-bar stagger
+        # needs two series with their own plain numeric animationDelay
+        # instead of an animationDelay *function* keyed on data index.
+        "series": [
+            {
+                "name": "Model output", "type": "bar", "barWidth": 28, "barGap": "-100%",
+                "data": [round(model_total / div, 3), None],
+                "itemStyle": {"color": model_color, "borderRadius": [0, 6, 6, 0], "shadowBlur": 10, "shadowColor": model_color},
+                "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
+                "emphasis": {"itemStyle": {"shadowBlur": 24}},
+                "animationDuration": 1300, "animationEasing": "elasticOut", "animationDelay": 0,
+            },
+            {
+                "name": "Independent control", "type": "bar", "barWidth": 28,
+                "data": [None, round(reference_total / div, 3)],
+                "itemStyle": {"color": TEAL, "borderRadius": [0, 6, 6, 0], "shadowBlur": 10, "shadowColor": TEAL},
+                "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
+                "emphasis": {"itemStyle": {"shadowBlur": 24}},
+                "animationDuration": 1300, "animationEasing": "elasticOut", "animationDelay": 220,
+            },
+        ],
     }
-    ui.echart(options).classes("w-full").style("height: 150px;")
+    chart = ui.echart(options).classes("w-full").style("height: 150px;")
+
+    # Keeps the chart visibly alive at rest, not just animating once on
+    # first paint - a slow highlight sweep alternating between the two bars.
+    # Self-limiting and defensive: _main_panel is @ui.refreshable, so
+    # switching between catalog models tears this chart out of the DOM
+    # without NiceGUI auto-cancelling the timer that references it. Bound
+    # the sweep to a handful of cycles and stop immediately on any error
+    # (a removed element) rather than leaking timers on stale charts.
+    pulse_state = {"cycles": 0}
+
+    async def _pulse() -> None:
+        if pulse_state["cycles"] >= 6:
+            pulse_timer.cancel()
+            return
+        pulse_state["cycles"] += 1
+        try:
+            for series_idx in (0, 1):
+                await chart.run_chart_method("dispatchAction", {"type": "downplay", "seriesIndex": [0, 1]})
+                await chart.run_chart_method("dispatchAction", {"type": "highlight", "seriesIndex": series_idx})
+                await asyncio.sleep(1.4)
+            await chart.run_chart_method("dispatchAction", {"type": "downplay", "seriesIndex": [0, 1]})
+        except Exception:
+            pulse_timer.cancel()
+
+    pulse_timer = ui.timer(3.2, _pulse)
+
+    ui.timer(3.2, _pulse)
 
 
 def _governance_donut() -> None:
