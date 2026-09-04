@@ -29,8 +29,32 @@ from mcp_server import tools as t
 load_dotenv()
 
 _ANTHROPIC_MODEL = os.environ.get("CALIBRATE_MODEL", "claude-sonnet-5")
-_GEMINI_MODEL = os.environ.get("CALIBRATE_GEMINI_MODEL", "gemini-2.5-flash")
+_GEMINI_MODEL = os.environ.get("CALIBRATE_GEMINI_MODEL", "gemini-flash-latest")
 _MAX_TURNS = 8
+_GEMINI_MAX_RETRIES = 3
+
+
+def _call_gemini_with_retry(client: Any, model: str, contents: Any, config: Any, emit: Callable[[str], None]) -> Any:
+    """Gemini's free-tier flash models return a transient 503 'high demand'
+    error often enough in practice that it needs handling here, not just a
+    hard failure - confirmed live: two straight 503s followed immediately
+    by a clean success on the third identical request, no code change in
+    between. Anthropic's SDK already retries transient errors internally;
+    google-genai's client does not, so this loop does it explicitly.
+    """
+    from google.genai import errors
+
+    last_exc: Exception | None = None
+    for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+        try:
+            return client.models.generate_content(model=model, contents=contents, config=config)
+        except errors.ServerError as exc:
+            last_exc = exc
+            if attempt < _GEMINI_MAX_RETRIES:
+                wait = 2 * attempt
+                emit(f"    ({model} reported high demand - retrying in {wait}s, attempt {attempt}/{_GEMINI_MAX_RETRIES})")
+                time.sleep(wait)
+    raise last_exc
 
 
 def friendly_agent_error(exc: Exception) -> str:
@@ -252,7 +276,7 @@ def _generate_with_gemini(
     for turn in range(1, _MAX_TURNS + 1):
         _emit(f"  turn {turn}: calling {_GEMINI_MODEL}...")
         t0 = time.perf_counter()
-        response = client.models.generate_content(model=_GEMINI_MODEL, contents=contents, config=config)
+        response = _call_gemini_with_retry(client, _GEMINI_MODEL, contents, config, _emit)
         _emit(f"  turn {turn}: response in {(time.perf_counter() - t0) * 1000:.0f}ms")
 
         candidate = response.candidates[0]

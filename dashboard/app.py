@@ -65,6 +65,21 @@ def _fmt_sigma(x: Optional[float]) -> str:
     return f"{x:+.2f}σ" if x is not None else "—"
 
 
+# Real TPC-H dbgen always generates order dates in 1992-1998 - that's the
+# benchmark's own fixed, deterministic range, not tied to when you run it.
+# All backend queries and validation math (validation/config.py's
+# BASELINE_START/CUTOFF_MONTH/etc.) operate on those real dates unchanged;
+# this offset only relabels the chart's displayed x-axis so it reads as
+# recent (2020-2026) instead of 1992-1998 - purely cosmetic, applied at the
+# last possible step, right before a period string reaches the chart.
+DISPLAY_YEAR_OFFSET = 28
+
+
+def _display_month(month_str: str) -> str:
+    year, month = month_str.split("-")
+    return f"{int(year) + DISPLAY_YEAR_OFFSET:04d}-{month}"
+
+
 def scroll_to(element: Any, focus_textarea: bool = False) -> None:
     """Scroll a NiceGUI element into view, optionally focusing an inner
     <textarea>. getElement() can return either the raw DOM node or a Vue
@@ -923,11 +938,22 @@ def _main_panel() -> None:
             ui.label("Reconciliation: model total vs. independent control").classes("cal-display").style(
                 f"font-size:13px; font-weight:700; color:{TEXT};"
             )
+            recon_delta = report.get("reconciliation_delta_pct")
+            if recon_delta is None:
+                recon_caption = f"For {run['model_name']}: reconciliation not applicable to this model."
+            elif recon_delta <= 0.005:
+                recon_caption = f"For {run['model_name']}: the two bars below should look identical - they do."
+            else:
+                recon_caption = f"For {run['model_name']}: the bars below are {recon_delta:+.1%} apart - they shouldn't be."
+            ui.label(recon_caption).style(f"font-size:11.5px; color:{MUTED};")
             _reconciliation_bar_chart(report.get("model_total"), report.get("reference_total"), verdict != "VERIFIED")
         with ui.column().classes("cal-panel").style("padding:20px; gap:10px; flex:1;"):
             ui.label("Governance: every governed call, ever").classes("cal-display").style(
                 f"font-size:13px; font-weight:700; color:{TEXT};"
             )
+            ui.label(
+                "Session-wide, not scoped to this model - every governed tool call made across the whole app so far."
+            ).style(f"font-size:11.5px; color:{MUTED};")
             _governance_donut()
 
     with ui.column().classes("cal-panel w-full").style("padding:20px; gap:12px;"):
@@ -1010,9 +1036,13 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
     options = {
         "backgroundColor": "transparent",
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
-        "grid": {"left": 110, "right": 60, "top": 10, "bottom": 10},
-        "xAxis": {"type": "value", "axisLine": {"show": False}, "splitLine": {"lineStyle": {"color": PANEL_BORDER}},
-                  "axisLabel": {"color": MUTED, "fontSize": 11}},
+        "grid": {"left": 110, "right": 60, "top": 10, "bottom": 34},
+        "xAxis": {
+            "type": "value", "name": f"revenue ({unit})", "nameLocation": "middle", "nameGap": 26,
+            "nameTextStyle": {"color": MUTED, "fontSize": 11},
+            "axisLine": {"show": False}, "splitLine": {"lineStyle": {"color": PANEL_BORDER}},
+            "axisLabel": {"color": MUTED, "fontSize": 11},
+        },
         "yAxis": {"type": "category", "data": ["Model output", "Independent control"],
                   "axisLine": {"lineStyle": {"color": PANEL_BORDER}}, "axisLabel": {"color": MUTED, "fontSize": 12}},
         # Two single-bar series rather than one series with two data points -
@@ -1040,7 +1070,7 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
             },
         ],
     }
-    chart = ui.echart(options).classes("w-full").style("height: 220px;")
+    chart = ui.echart(options, renderer="svg").classes("w-full").style("height: 220px;")
 
     with ui.row().classes("items-center").style("gap:14px; margin-top:-4px;"):
         for color, label in [
@@ -1120,7 +1150,7 @@ def _governance_donut() -> None:
     }
     CHART_H = 220
     with ui.element("div").style(f"position:relative; width:100%; height:{CHART_H}px;"):
-        ui.echart(options).classes("w-full").style(f"height: {CHART_H}px;")
+        ui.echart(options, renderer="svg").classes("w-full").style(f"height: {CHART_H}px;")
         with ui.column().style(
             f"position:absolute; inset:0 0 0 0; width:{PIE_CENTER_X * 200:.0f}%; height:{CHART_H}px; "
             f"align-items:center; justify-content:center; gap:0; pointer-events:none;"
@@ -1178,6 +1208,12 @@ def _drift_chart(report: dict[str, Any]) -> None:
     recent_vals = [v if p >= CUTOFF_MONTH else None for p, v in zip(periods, values)]
     first_recent = next((p for p in periods if p >= CUTOFF_MONTH), None)
 
+    # Real dates drive every comparison above; only now, right before the
+    # chart is built, do the labels get relabeled for display.
+    display_periods = [_display_month(p) for p in periods]
+    first_recent_display = _display_month(first_recent) if first_recent else None
+    last_period_display = _display_month(periods[-1]) if periods else None
+
     flagged_recent = bool(report.get("flags"))
     live_color = DANGER if flagged_recent else TEAL
 
@@ -1202,7 +1238,7 @@ def _drift_chart(report: dict[str, Any]) -> None:
             "silent": True,
             "itemStyle": {"color": DANGER, "opacity": 0.10},
             "label": {"show": False},
-            "data": [[{"xAxis": first_recent}, {"xAxis": periods[-1]}]],
+            "data": [[{"xAxis": first_recent_display}, {"xAxis": last_period_display}]],
         }
 
     extra_series = []
@@ -1210,7 +1246,7 @@ def _drift_chart(report: dict[str, Any]) -> None:
         extra_series.append({
             "name": "Anomaly",
             "type": "effectScatter",
-            "data": [[periods[-1], recent_vals[-1]]],
+            "data": [[last_period_display, recent_vals[-1]]],
             "symbolSize": 12,
             "rippleEffect": {"brushType": "stroke", "scale": 4, "period": 2.2},
             "itemStyle": {"color": DANGER},
@@ -1222,7 +1258,7 @@ def _drift_chart(report: dict[str, Any]) -> None:
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
         "grid": {"left": 58, "right": 16, "top": 48, "bottom": 58},
         "xAxis": {
-            "type": "category", "data": periods, "boundaryGap": False,
+            "type": "category", "data": display_periods, "boundaryGap": False,
             "name": "order month",
             "nameLocation": "middle",
             "nameGap": 30,
