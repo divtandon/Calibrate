@@ -651,10 +651,10 @@ def _main_panel() -> None:
                 count_up(value_label, delta * 100, "pct")
             ui.label("model total vs independent control sum").style(f"font-size:11px; color:{MUTED};")
 
-    ui.label("THE THREE CHECKS, IN PLAIN ENGLISH").classes("cal-display").style(
+    ui.label("THE THREE CHECKS").classes("cal-display").style(
         f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em; margin-top:4px;"
     )
-    with ui.row().classes("w-full no-wrap").style("gap:16px;"):
+    with ui.row().classes("w-full no-wrap items-stretch").style("gap:16px;"):
         dup = report.get("duplicate_group_rows", 0) or 0
         total_rows = report.get("total_row_count", 0) or 0
         key_desc = ", ".join(report.get("dimension_cols") or ["region"]) + f", {report.get('period_col', 'month')}"
