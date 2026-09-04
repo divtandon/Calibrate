@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
 
@@ -59,11 +60,25 @@ def _slugify(prompt: str) -> str:
     return slug[:60] or "generated_model"
 
 
-def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
+def generate_model(
+    prompt: str,
+    save_dir: str = "examples",
+    on_step: Optional[Callable[[str], None]] = None,
+) -> GenerationResult:
     """Run the full agent loop for one natural-language request and save the
     resulting dbt model to save_dir/<slug>.sql. Requires ANTHROPIC_API_KEY.
+
+    on_step, if given, is called synchronously with one human-readable line
+    after every real milestone (each LLM turn, each governed tool call with
+    its actual measured duration, the final save) as it actually happens -
+    not replayed afterward. dashboard/app.py uses this to stream the run
+    live instead of showing a single "please wait" spinner.
     """
     import anthropic
+
+    def _emit(line: str) -> None:
+        if on_step is not None:
+            on_step(line)
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -79,7 +94,11 @@ def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
     tool_calls: list[dict[str, Any]] = []
     final_text = ""
 
+    _emit(f'agent.generate_model("{prompt}")')
+
     for turn in range(1, _MAX_TURNS + 1):
+        _emit(f"  turn {turn}: calling {_MODEL}...")
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=_MODEL,
             max_tokens=4096,
@@ -87,6 +106,7 @@ def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
             tools=TOOL_DEFINITIONS,
             messages=messages,
         )
+        _emit(f"  turn {turn}: response in {(time.perf_counter() - t0) * 1000:.0f}ms")
 
         assistant_content = [block.model_dump() for block in response.content]
         messages.append({"role": "assistant", "content": assistant_content})
@@ -100,6 +120,7 @@ def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
 
         tool_results = []
         for block in tool_use_blocks:
+            t1 = time.perf_counter()
             try:
                 result = _dispatch_tool(block.name, block.input)
                 content = str(result)
@@ -107,6 +128,10 @@ def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
             except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
                 content = f"Error: {exc}"
                 is_error = True
+            duration_ms = (time.perf_counter() - t1) * 1000
+            status = "ERROR" if is_error else "ok"
+            arg_preview = ", ".join(f"{k}={v!r:.60}" for k, v in block.input.items() if k != "sql")
+            _emit(f"    [governed] calibrate-agent -> {block.name}({arg_preview}) ... {status} ({duration_ms:.0f}ms)")
             tool_calls.append({"tool": block.name, "input": block.input, "error": is_error})
             tool_results.append(
                 {
@@ -128,5 +153,6 @@ def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
     out_path = Path(save_dir) / f"{model_name}.sql"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(sql + "\n", encoding="utf-8")
+    _emit(f"  saved {out_path}")
 
     return GenerationResult(sql=sql, model_name=model_name, turns=turn, tool_calls=tool_calls)
