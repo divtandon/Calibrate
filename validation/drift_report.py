@@ -46,6 +46,7 @@ def run_and_report(
     sql_path: Optional[str] = None,
     use_reconciliation: bool = True,
     actor: str = "validation-engine",
+    source_note: Optional[str] = None,
 ) -> dict[str, Any]:
     from mcp_server.tools import flag_output_anomaly, run_generated_model
 
@@ -86,6 +87,7 @@ def run_and_report(
         "period_col": period_col,
         "metric_col": metric_col,
         "dimension_cols": dimension_cols,
+        "source_note": source_note,
         **result.to_dict(),
     }
     results_store.save_run(model_name, sql_path or "", result.verdict, result.flags, report)

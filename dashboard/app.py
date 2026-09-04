@@ -262,40 +262,99 @@ def index() -> None:
                 _sidebar()
             with ui.column().classes("flex-grow").style("height:100%; padding:20px; gap:18px; overflow-y:auto;"):
                 _pipeline_diagram()
-                _explainer_banner()
                 _main_panel()
         _governance_strip()
 
 
-def _explainer_banner() -> None:
-    """A random visitor should be able to read this and understand the
-    whole point of the project without reading a line of code. Everything
-    it claims is backed by the check cards and charts directly below it.
+@ui.page("/info")
+def info_page() -> None:
+    """The full explanation used to live inline on the dashboard, crowding
+    out the run-specific content. It's a real second page now - one topic,
+    not a banner competing with the data for the same screen.
     """
-    with ui.row().classes("cal-panel w-full no-wrap items-start").style(
-        f"padding:18px 22px; gap:18px; border-color:rgba(57,230,160,0.25);"
+    _inject_style()
+    ui.dark_mode().enable()
+    ui.colors(primary=ACCENT)
+    _particle_field()
+
+    with ui.column().classes("w-full h-screen no-wrap").style(
+        "background:transparent; padding:0; gap:0; position:relative; z-index:2;"
     ):
-        ui.icon("psychology", size="28px").style(f"color:{ACCENT}; margin-top:2px; flex-shrink:0;")
-        with ui.column().style("gap:6px;"):
-            ui.label("Why this exists").classes("cal-display").style(
-                f"font-size:14px; font-weight:700; color:{TEXT};"
+        with ui.row().classes("w-full items-center no-wrap").style(
+            f"background:{PANEL}CC; backdrop-filter: blur(6px); border-bottom:1px solid {PANEL_BORDER}; padding:12px 22px; gap:20px;"
+        ):
+            ui.icon("hub", size="26px").style(f"color:{ACCENT};")
+            ui.label("Calibrate").classes("cal-display").style(f"font-size:20px; font-weight:800; color:{TEXT};")
+            ui.space()
+            ui.link("← BACK TO DASHBOARD", "/").style(
+                f"font-size:12px; color:{TEAL}; font-weight:700; letter-spacing:.05em; text-decoration:none;"
             )
-            ui.label(
-                "An AI agent can write SQL that references only real columns, executes without error, and still "
-                "quietly returns the wrong answer - a bad join, a missing GROUP BY, a metric that drifts. Schema "
-                "grounding alone can't catch that; only checking the actual output can. Below, an agent generates "
-                "a dbt model against a real TPC-H dataset, and three independent statistical checks decide whether "
-                "to trust it - not whether it ran, whether its numbers hold up."
-            ).style(f"font-size:12.5px; color:{MUTED}; line-height:1.6; max-width:980px;")
-            with ui.row().classes("items-center").style("gap:18px; margin-top:2px;"):
-                for icon, label in [
-                    ("fingerprint", "Uniqueness — is each row's key actually unique?"),
-                    ("balance", "Reconciliation — does the total match an independent control sum?"),
-                    ("show_chart", "Drift — does recent output match the historical shape?"),
+
+        with ui.column().style("max-width:920px; margin:0 auto; padding:40px 24px; gap:22px; overflow-y:auto;"):
+            ui.label("How Calibrate works").classes("cal-display").style(
+                f"font-size:26px; font-weight:800; color:{TEXT};"
+            )
+
+            with ui.column().classes("cal-panel").style("padding:24px; gap:12px;"):
+                ui.label("The problem").classes("cal-display").style(f"font-size:15px; font-weight:700; color:{TEXT};")
+                ui.label(
+                    "An AI agent can write SQL that references only real columns, executes without error, and "
+                    "still quietly return the wrong answer - a bad join, a missing GROUP BY, a metric that drifts. "
+                    "Grounding an agent in a real schema stops it from inventing a column that doesn't exist. It "
+                    "does not stop it from writing a query that runs cleanly and silently answers the wrong "
+                    "question. That second failure mode is common enough that dedicated tooling already exists for "
+                    "it (dbt-expectations, Great Expectations, elementary) - it just isn't wired into the "
+                    "generation loop itself, which is what this project does."
+                ).style(f"font-size:13.5px; color:{MUTED}; line-height:1.7;")
+
+            with ui.column().classes("cal-panel").style("padding:24px; gap:12px;"):
+                ui.label("The pipeline").classes("cal-display").style(f"font-size:15px; font-weight:700; color:{TEXT};")
+                _pipeline_diagram()
+                ui.label(
+                    "An agent (Anthropic's Claude, via a real tool-use loop) grounds itself in the actual schema of "
+                    "a real TPC-H benchmark dataset before writing SQL, generates a dbt model, and self-tests its "
+                    "draft by executing it. Every one of those calls goes through a governed MCP tool layer that "
+                    "policy-checks and audit-logs it before it touches data - allowed or denied, either way it's "
+                    "recorded. Once a model is generated, it doesn't ship on \"it ran without error\" - it goes "
+                    "through three independent statistical checks."
+                ).style(f"font-size:13.5px; color:{MUTED}; line-height:1.7;")
+
+            with ui.column().classes("cal-panel").style("padding:24px; gap:16px;"):
+                ui.label("The three checks").classes("cal-display").style(f"font-size:15px; font-weight:700; color:{TEXT};")
+                for icon, title, body in [
+                    ("fingerprint", "Uniqueness",
+                     "Does each (dimension, period) combination appear exactly once in the output? A model that "
+                     "groups by the wrong key, or forgets to group by one, produces duplicate rows here - silently, "
+                     "with no error."),
+                    ("balance", "Reconciliation",
+                     "Does the model's grand total match an independently-computed control sum for the same "
+                     "universe of orders? A join that fans out (e.g. joining to a one-to-many table before "
+                     "aggregating) inflates a total without ever throwing an error - this catches it directly."),
+                    ("show_chart", "Historical drift",
+                     "Split into TPC-H's real historical-vs-recent order-date periods, does the recent period's row "
+                     "count, null rate, and value distribution stay within the same statistical shape as the "
+                     "historical baseline (a 3-sigma threshold)? This is the check that catches a model whose logic "
+                     "is fine today but starts drifting."),
                 ]:
-                    with ui.row().classes("items-center").style("gap:6px;"):
-                        ui.icon(icon, size="14px").style(f"color:{TEAL};")
-                        ui.label(label).style(f"font-size:11.5px; color:{MUTED};")
+                    with ui.row().classes("w-full no-wrap items-start").style("gap:14px;"):
+                        ui.icon(icon, size="20px").style(f"color:{TEAL}; margin-top:2px; flex-shrink:0;")
+                        with ui.column().style("gap:2px;"):
+                            ui.label(title).style(f"font-size:13.5px; font-weight:700; color:{TEXT};")
+                            ui.label(body).style(f"font-size:13px; color:{MUTED}; line-height:1.65;")
+
+            with ui.column().classes("cal-panel").style("padding:24px; gap:12px;"):
+                ui.label("Governance").classes("cal-display").style(f"font-size:15px; font-weight:700; color:{TEXT};")
+                ui.label(
+                    "Every one of the four MCP tools (get_schema, get_historical_baseline, run_generated_model, "
+                    "flag_output_anomaly) is wrapped so every call - allowed or blocked - is policy-checked and "
+                    "logged before it touches data. Generated SQL that isn't a pure read (DROP, DELETE, INSERT, "
+                    "ALTER, ...) is rejected before it ever reaches the database. The governance strip at the "
+                    "bottom of the dashboard is that audit trail, live."
+                ).style(f"font-size:13.5px; color:{MUTED}; line-height:1.7;")
+
+            ui.link("← Back to the dashboard", "/").style(
+                f"font-size:13px; color:{ACCENT}; font-weight:600; margin-top:8px;"
+            )
 
 
 def _header() -> None:
@@ -307,6 +366,11 @@ def _header() -> None:
             ui.label("Calibrate").classes("cal-display").style(f"font-size:20px; font-weight:800; color:{TEXT}; letter-spacing:.01em;")
             ui.label("Data Engine").style(f"font-size:11px; color:{MUTED}; letter-spacing:.05em;")
         ui.space()
+        with ui.row().classes("items-center").style("gap:6px; cursor:pointer;").on(
+            "click", lambda: ui.navigate.to("/info")
+        ):
+            ui.icon("info", size="16px").style(f"color:{TEAL};")
+            ui.label("INFO").style(f"font-size:12px; color:{TEAL}; font-weight:700; letter-spacing:.08em;")
         ui.label("TARGET").style(f"font-size:11px; color:{MUTED}; letter-spacing:.08em;")
         ui.label(_backend_label()).style(f"font-size:13px; color:{TEAL}; font-weight:600;")
         with ui.row().classes("items-center").style("gap:7px;"):
@@ -495,7 +559,9 @@ def _sidebar() -> None:
 
             report = await run.io_bound(
                 run_and_report, result.model_name, result.sql, "order_month", "total_revenue", ["region"],
-                f"examples/{result.model_name}.sql",
+                f"examples/{result.model_name}.sql", True, "validation-engine",
+                f'Generated by the agent from the prompt "{prompt.value}" - {len(result.tool_calls)} governed '
+                f"tool call(s), {result.turns} turn(s).",
             )
             for text, cls in _report_lines(report):
                 await _print(text, cls)
@@ -602,6 +668,78 @@ def _select_run(run_id: int) -> None:
     _main_panel.refresh()
 
 
+def _catalog_summary_chip() -> None:
+    """Precise, short catalog-wide summary - real counts from every model's
+    latest run, not just the one currently open. Fills the empty space next
+    to the breadcrumb instead of leaving it blank.
+    """
+    runs = load_runs()
+    seen: dict[str, dict[str, Any]] = {}
+    for r in runs:
+        seen.setdefault(r["model_name"], r)
+    total = len(seen)
+    verified = sum(1 for r in seen.values() if r["verdict"] == "VERIFIED")
+    flagged = total - verified
+
+    with ui.row().classes("items-center").style(
+        f"gap:10px; padding:5px 14px; border:1px solid {PANEL_BORDER}; border-radius:8px; "
+        f"background:{PANEL}; margin-right:12px;"
+    ):
+        ui.icon("dataset", size="14px").style(f"color:{TEAL};")
+        ui.label(f"{total} in catalog").style(f"font-size:11.5px; color:{MUTED};")
+        ui.label("·").style(f"color:{PANEL_BORDER};")
+        ui.label(f"{verified} verified").style(f"font-size:11.5px; color:{ACCENT}; font-weight:700;")
+        ui.label("·").style(f"color:{PANEL_BORDER};")
+        ui.label(f"{flagged} flagged").style(
+            f"font-size:11.5px; font-weight:700; color:{DANGER if flagged else MUTED};"
+        )
+
+
+def _run_summary_panel(run: dict[str, Any], report: dict[str, Any]) -> None:
+    """What used to be a generic "why this exists" blurb is now a real,
+    per-run explanation - what this specific model is, and specifically
+    why it passed or failed, built from this run's actual check results.
+    """
+    source_note = report.get("source_note")
+    verdict = run["verdict"]
+
+    reasons: list[str] = []
+    dup = report.get("duplicate_group_rows", 0) or 0
+    if dup:
+        reasons.append(f"{dup:,} duplicate grouping key(s)")
+    delta = report.get("reconciliation_delta_pct")
+    if delta is not None and delta > 0.005:
+        reasons.append(f"a {delta:+.1%} reconciliation mismatch")
+    sigma = report.get("distribution_drift_sigma")
+    if sigma is not None and abs(sigma) > 3.0:
+        reasons.append(f"{sigma:+.2f}σ of historical drift")
+    if any("result_truncated" in f for f in (run.get("flags") or [])):
+        reasons.append("a truncated result set")
+
+    if verdict == "VERIFIED":
+        verdict_text = (
+            "This run passed all three checks - its output is statistically consistent with real historical "
+            "data, and its total reconciles exactly to an independent control sum."
+        )
+    else:
+        reason_text = ", ".join(reasons) if reasons else "a validation failure"
+        verdict_text = f"This run was flagged for {reason_text} - see the checks below for the real numbers."
+
+    with ui.row().classes("cal-panel w-full no-wrap items-start").style(
+        f"padding:16px 20px; gap:14px; "
+        f"border-color:{'rgba(57,230,160,0.25)' if verdict == 'VERIFIED' else 'rgba(255,93,120,0.3)'};"
+    ):
+        ui.icon("auto_awesome" if source_note else "inventory_2", size="20px").style(
+            f"color:{TEAL}; margin-top:2px; flex-shrink:0;"
+        )
+        with ui.column().style("gap:4px;"):
+            sql_path = run.get("sql_path") or f"{run['model_name']}.sql"
+            ui.label(source_note or f"Pre-built example model — {sql_path}.").style(
+                f"font-size:12.5px; color:{TEXT}; line-height:1.6;"
+            )
+            ui.label(verdict_text).style(f"font-size:12.5px; color:{MUTED}; line-height:1.6;")
+
+
 @ui.refreshable
 def _main_panel() -> None:
     from validation import results_store
@@ -629,12 +767,15 @@ def _main_panel() -> None:
     with ui.row().classes("w-full items-center"):
         ui.label(f"DASHBOARDS  ›  {run['model_name']}").style(f"font-size:12px; color:{MUTED}; letter-spacing:.05em;")
         ui.space()
+        _catalog_summary_chip()
         verdict = run["verdict"]
         overall_color = ACCENT if verdict == "VERIFIED" else DANGER
         badge(
             f"{'✓ TRUSTED' if verdict == 'VERIFIED' else '✕ DO NOT SHIP'} — {verdict}",
             "#04120c" if verdict == "VERIFIED" else "#2a0a10", overall_color,
         )
+
+    _run_summary_panel(run, report)
 
     with ui.row().classes("w-full no-wrap").style("gap:16px;"):
         _stat_tile("ROW COUNT DELTA", report.get("row_count_delta_pct"), "pct", 0.25, "rows/period, recent vs historical")
@@ -696,9 +837,16 @@ def _main_panel() -> None:
 
     with ui.column().classes("cal-panel w-full").style("padding:20px; gap:12px;"):
         with ui.row().classes("items-center w-full"):
-            ui.label("Generated Model Output vs Historical Baseline").classes("cal-display").style(
-                f"font-size:14px; font-weight:700; color:{TEXT};"
-            )
+            with ui.column().style("gap:1px;"):
+                ui.label("Generated Model Output vs Historical Baseline").classes("cal-display").style(
+                    f"font-size:14px; font-weight:700; color:{TEXT};"
+                )
+                if verdict != "VERIFIED":
+                    from validation.config import Z_SCORE_THRESHOLD
+
+                    ui.label(
+                        f"Shaded red region: the recent period, flagged (>{Z_SCORE_THRESHOLD:.1f}σ threshold) — see checks above for why"
+                    ).style(f"font-size:11px; color:{DANGER};")
             ui.space()
             badge(verdict, "#04120c" if verdict == "VERIFIED" else "#2a0a10", overall_color)
         _drift_chart(report)
@@ -869,7 +1017,7 @@ def _governance_donut() -> None:
 
 
 def _drift_chart(report: dict[str, Any]) -> None:
-    from validation.config import CUTOFF_MONTH, Z_SCORE_THRESHOLD
+    from validation.config import CUTOFF_MONTH
 
     resolved_sql = report.get("resolved_sql", "")
 
@@ -929,14 +1077,18 @@ def _drift_chart(report: dict[str, Any]) -> None:
         "animationEasing": "elasticOut",
     }
     if flagged_recent and first_recent is not None and periods:
+        # No embedded label here on purpose: an "insideTopLeft" label
+        # assumes the shaded region's top stays clear, but a flagged
+        # model's recent-period values are often inflated (that's kind of
+        # the point), which can push the data line straight through where
+        # the label would sit. The equivalent text lives in the panel
+        # header below instead, in plain DOM flow where it can't collide
+        # with the data regardless of its shape.
         generated_series["markArea"] = {
             "silent": True,
             "itemStyle": {"color": DANGER, "opacity": 0.10},
-            "label": {"show": True, "position": "insideTopLeft", "color": DANGER, "fontSize": 11, "fontWeight": 700},
-            "data": [[
-                {"xAxis": first_recent, "name": f"  ANOMALY DRIFT (>{Z_SCORE_THRESHOLD:.1f}σ)"},
-                {"xAxis": periods[-1]},
-            ]],
+            "label": {"show": False},
+            "data": [[{"xAxis": first_recent}, {"xAxis": periods[-1]}]],
         }
 
     extra_series = []
@@ -954,7 +1106,7 @@ def _drift_chart(report: dict[str, Any]) -> None:
     options = {
         "backgroundColor": "transparent",
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
-        "grid": {"left": 74, "right": 32, "top": 48, "bottom": 44},
+        "grid": {"left": 58, "right": 16, "top": 48, "bottom": 44},
         "xAxis": {
             "type": "category", "data": periods, "boundaryGap": False,
             "axisLine": {"lineStyle": {"color": PANEL_BORDER}},
@@ -983,26 +1135,62 @@ def _drift_chart(report: dict[str, Any]) -> None:
             generated_series,
             *extra_series,
         ],
+        # Anchored left, not right: the "recent" period is always the
+        # rightmost part of the x-axis, and so is the ANOMALY DRIFT
+        # markArea label when a run is flagged - a right-anchored legend
+        # sat directly on top of it.
         "legend": {
             "data": ["Historical baseline", "Generated model output"],
-            "textStyle": {"color": MUTED, "fontSize": 12}, "top": 6, "right": 8,
+            "textStyle": {"color": MUTED, "fontSize": 12}, "top": 6, "left": 8,
             "itemWidth": 16, "itemGap": 18,
         },
     }
-    ui.echart(options).classes("w-full").style("height: 360px;")
+    ui.echart(options, renderer="svg").classes("w-full").style("height: 360px;")
 
 
 def _governance_strip() -> None:
-    with ui.column().style(
+    # w-full + explicit width/max-width/box-sizing/overflow-x:hidden here is
+    # load-bearing: without it this column (a flex child with no width of
+    # its own) grows to fit its content instead of being clamped to the
+    # viewport, so the *whole strip* ran off the right edge as one long row
+    # rather than clipping and scrolling inside itself.
+    with ui.column().classes("w-full").style(
         f"background:{PANEL}CC; backdrop-filter: blur(6px); border-top:1px solid {PANEL_BORDER}; "
-        f"padding:12px 20px; gap:8px; max-height:190px;"
+        f"padding:12px 20px; gap:8px; max-height:190px; width:100%; max-width:100%; "
+        f"box-sizing:border-box; overflow-x:hidden;"
     ):
         with ui.row().classes("items-center").style("gap:8px;"):
             ui.icon("shield", size="16px").style(f"color:{TEAL};")
             ui.label("GOVERNANCE — live audit trail").classes("cal-display").style(
                 f"font-size:12px; font-weight:700; color:{MUTED}; letter-spacing:.06em;"
             )
-        rows_container = ui.row().classes("w-full no-wrap").style("gap:10px; overflow-x:auto; padding-bottom:6px;")
+        strip_wrap = ui.element("div").style("position:relative; width:100%; max-width:100%; overflow:hidden;")
+        with strip_wrap:
+            rows_container = ui.row().classes("w-full no-wrap").style(
+                "gap:10px; overflow-x:auto; padding-bottom:6px; scroll-behavior:smooth; min-width:0; max-width:100%;"
+            )
+
+            def _scroll(delta: int) -> None:
+                ui.run_javascript(f"getElement({rows_container.id}).scrollBy({{left:{delta}, behavior:'smooth'}});")
+
+            # A fade + a clickable arrow at each edge - the fade signals
+            # "there's more" even before you've touched it, the arrow
+            # makes "swipe" possible with a click for anyone not on a
+            # touch/trackpad-scroll device.
+            ui.html(
+                f'<div style="position:absolute; left:0; top:0; bottom:6px; width:36px; pointer-events:none; '
+                f'background:linear-gradient(90deg, {PANEL}, transparent); z-index:1;"></div>'
+            )
+            ui.html(
+                f'<div style="position:absolute; right:0; top:0; bottom:6px; width:36px; pointer-events:none; '
+                f'background:linear-gradient(270deg, {PANEL}, transparent); z-index:1;"></div>'
+            )
+            ui.button(icon="chevron_left", on_click=lambda: _scroll(-320)).props("round dense flat").style(
+                f"position:absolute; left:0; top:0; bottom:6px; margin:auto; z-index:2; color:{TEXT}; min-height:28px;"
+            )
+            ui.button(icon="chevron_right", on_click=lambda: _scroll(320)).props("round dense flat").style(
+                f"position:absolute; right:0; top:0; bottom:6px; margin:auto; z-index:2; color:{TEXT}; min-height:28px;"
+            )
         seen_ids: set[int] = set()
 
         def refresh_strip() -> None:
