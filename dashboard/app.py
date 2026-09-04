@@ -45,7 +45,7 @@ TEAL = "#31d8d1"
 VIOLET = "#9b8cff"
 BASELINE_COLOR = "#5c6785"
 
-state: dict[str, Any] = {"selected_run_id": None}
+state: dict[str, Any] = {"selected_run_id": None, "prompt_ref": None, "checks_anchor": None, "governance_anchor": None}
 
 
 def _backend_label() -> str:
@@ -63,6 +63,43 @@ def _fmt_pct(x: Optional[float]) -> str:
 
 def _fmt_sigma(x: Optional[float]) -> str:
     return f"{x:+.2f}σ" if x is not None else "—"
+
+
+def scroll_to(element: Any, focus_textarea: bool = False) -> None:
+    """Scroll a NiceGUI element into view, optionally focusing an inner
+    <textarea>. getElement() can return either the raw DOM node or a Vue
+    component instance (DOM node under .$el) depending on element type -
+    and for some components (confirmed for ui.textarea by inspecting the
+    live page: .$el resolved to a bare Text node, not an Element) even
+    .$el isn't reliably an Element. Walk up to .parentElement whenever
+    what we have isn't a real Element node (nodeType 1).
+    """
+    if element is None:
+        return
+    # Deferred via setTimeout: firing focus() synchronously in the same
+    # tick as a click can lose a race against the browser's own default
+    # click-focus behavior on the clicked element, which runs right after
+    # and steals focus back. Letting the click's own focus settle first
+    # makes this reliable regardless of what was clicked.
+    js = (
+        f"setTimeout(() => {{ "
+        f"let el = getElement({element.id}); "
+        f"if (el && el.$el) el = el.$el; "
+        f"if (el && el.nodeType && el.nodeType !== 1 && el.parentElement) el = el.parentElement; "
+        f"if (el && typeof el.scrollIntoView === 'function') "
+        f"el.scrollIntoView({{behavior:'smooth', block:'center'}}); "
+    )
+    if focus_textarea:
+        js += (
+            "const inner = el && el.querySelector ? el.querySelector('textarea') : null; "
+            "if (inner) inner.focus();"
+        )
+    js += " }, 60);"
+    ui.run_javascript(js)
+
+
+def focus_prompt_box() -> None:
+    scroll_to(state.get("prompt_ref"), focus_textarea=True)
 
 
 # ---------------------------------------------------------------- styling --
@@ -147,6 +184,25 @@ def _inject_style() -> None:
       @keyframes cal-node-pulse {{
         0%, 100% {{ filter: drop-shadow(0 0 0px rgba(57,230,160,0)); }}
         50% {{ filter: drop-shadow(0 0 6px rgba(57,230,160,0.45)); }}
+      }}
+
+      /* Clickable pipeline-diagram node cards */
+      .cal-pipe-node {{
+        cursor: pointer; transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+      }}
+      .cal-pipe-node:hover {{ transform: translateY(-2px); background: {PANEL_2}; }}
+      .cal-pipe-node:active {{ transform: translateY(0); }}
+      .cal-connector {{
+        position: relative; height: 2px; flex: 0 0 30px; background: {PANEL_BORDER}; overflow: hidden;
+      }}
+      .cal-connector::after {{
+        content: ''; position: absolute; inset: 0; width: 40%;
+        background: linear-gradient(90deg, transparent, {TEAL}, transparent);
+        animation: cal-connector-sweep 1.6s linear infinite;
+      }}
+      @keyframes cal-connector-sweep {{
+        from {{ transform: translateX(-100%); }}
+        to {{ transform: translateX(350%); }}
       }}
 
       .cal-particle {{
@@ -244,7 +300,7 @@ def load_audit(limit: int = 40) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------- app --
 
-def _particle_field(n: int = 46) -> None:
+def _particle_field(n: int = 90) -> None:
     import random
 
     random.seed(7)  # stable across reloads - motion without visual jitter on refresh
@@ -403,54 +459,74 @@ def _header() -> None:
         ui.timer(1.0, lambda: clock.set_text(f"telemetry live · {datetime.datetime.now().strftime('%H:%M:%S')}"))
 
 
+def _show_source_dialog() -> None:
+    from db.connection import get_backend
+
+    backend = get_backend()
+    tables = backend.list_tables()
+    with ui.dialog() as dialog, ui.card().classes("cal-panel").style(f"min-width:420px; background:{PANEL};"):
+        ui.label("SOURCE — live backend").classes("cal-display").style(f"font-size:14px; font-weight:700; color:{TEXT};")
+        ui.label(f"backend: {backend.name}").style(f"font-size:12px; color:{TEAL};")
+        with ui.column().style("gap:4px; margin-top:8px; max-height:320px; overflow-y:auto;"):
+            for t in tables:
+                _, rows = backend.execute(f"SELECT COUNT(*) FROM {backend.qualify(t)}")
+                with ui.row().classes("w-full items-center").style("gap:8px;"):
+                    ui.label(t).style(f"font-size:12.5px; color:{TEXT}; font-family:'JetBrains Mono',monospace;")
+                    ui.space()
+                    ui.label(f"{rows[0][0]:,} rows").style(f"font-size:12px; color:{MUTED};")
+        ui.button("Close", on_click=dialog.close).props("flat").style(f"color:{MUTED}; margin-top:8px;")
+    dialog.open()
+
+
+def _show_mcp_dialog() -> None:
+    from governance.audit_log import get_call_counts_by_tool
+
+    rows = get_call_counts_by_tool()
+    with ui.dialog() as dialog, ui.card().classes("cal-panel").style(f"min-width:420px; background:{PANEL};"):
+        ui.label("MCP TOOLS — governed calls, all time").classes("cal-display").style(
+            f"font-size:14px; font-weight:700; color:{TEXT};"
+        )
+        if not rows:
+            ui.label("No governed calls logged yet.").style(f"font-size:12px; color:{MUTED}; margin-top:8px;")
+        for r in rows:
+            with ui.row().classes("w-full items-center").style("gap:8px; margin-top:6px;"):
+                ui.label(r["tool"]).style(f"font-size:12.5px; color:{TEXT}; font-family:'JetBrains Mono',monospace;")
+                ui.space()
+                ui.label(f"{r['allowed']} allow").style(f"font-size:12px; color:{ACCENT};")
+                ui.label(f"{r['denied']} deny").style(f"font-size:12px; color:{DANGER if r['denied'] else MUTED};")
+        ui.button("Close", on_click=dialog.close).props("flat").style(f"color:{MUTED}; margin-top:8px;")
+    dialog.open()
+
+
 def _pipeline_diagram() -> None:
     """Always-visible, always-animating architecture strip - the system
-    looks alive even before you click anything. Five real stages
-    (source -> agent -> governed tools -> validation -> audit trail),
-    connected by flowing dashes.
+    looks alive even before you click anything. Five real stages (source ->
+    agent -> governed tools -> validation -> audit trail), and each one is a
+    real shortcut: SOURCE and MCP TOOLS open a dialog of real live data,
+    AGENT jumps to the generation box, VALIDATION and GOVERNANCE scroll to
+    the matching section of whatever's on screen.
     """
     nodes = [
-        ("SOURCE", "TPC-H SF1", ACCENT),
-        ("AGENT", "claude tool-use", VIOLET),
-        ("MCP TOOLS", "governed", TEAL),
-        ("VALIDATION", "baseline_check", AMBER),
-        ("GOVERNANCE", "audit_log.db", ACCENT),
+        ("SOURCE", "TPC-H SF1", ACCENT, "storage", _show_source_dialog),
+        ("AGENT", "claude tool-use", VIOLET, "smart_toy", focus_prompt_box),
+        ("MCP TOOLS", "governed", TEAL, "hub", _show_mcp_dialog),
+        ("VALIDATION", "baseline_check", AMBER, "fact_check", lambda: scroll_to(state.get("checks_anchor"))),
+        ("GOVERNANCE", "audit_log.db", ACCENT, "shield", lambda: scroll_to(state.get("governance_anchor"))),
     ]
-    n = len(nodes)
-    node_w, gap = 168, 26
-    total_w = n * node_w + (n - 1) * gap
-    node_h = 64
-    cy = node_h / 2 + 8
-    parts = [f'<svg viewBox="0 0 {total_w} {node_h + 16}" style="width:100%; height:84px;" preserveAspectRatio="xMidYMid meet">']
-    parts.append(f'<defs><linearGradient id="calFlow" x1="0" y1="0" x2="1" y2="0">'
-                  f'<stop offset="0%" stop-color="{TEAL}" stop-opacity="0"/>'
-                  f'<stop offset="50%" stop-color="{TEAL}" stop-opacity="1"/>'
-                  f'<stop offset="100%" stop-color="{TEAL}" stop-opacity="0"/></linearGradient></defs>')
-    for i in range(n - 1):
-        x1 = i * (node_w + gap) + node_w
-        x2 = x1 + gap
-        delay = i * 0.22
-        parts.append(f'<line x1="{x1}" y1="{cy}" x2="{x2}" y2="{cy}" stroke="{PANEL_BORDER}" stroke-width="2"/>')
-        parts.append(
-            f'<line x1="{x1}" y1="{cy}" x2="{x2}" y2="{cy}" stroke="url(#calFlow)" stroke-width="2.5" '
-            f'class="cal-flow" style="animation-delay:{delay}s"/>'
-        )
-    for i, (title, sub, color) in enumerate(nodes):
-        x = i * (node_w + gap)
-        parts.append(
-            f'<g class="cal-node-glow" style="animation-delay:{i * 0.4}s">'
-            f'<rect x="{x}" y="8" width="{node_w}" height="{node_h}" rx="11" '
-            f'fill="{PANEL}" stroke="{color}" stroke-opacity="0.55" stroke-width="1.3"/>'
-            f'<circle cx="{x + 18}" cy="{8 + node_h / 2}" r="4" fill="{color}"/>'
-            f'<text x="{x + 32}" y="{8 + node_h / 2 - 3}" fill="{TEXT}" font-size="12.5" '
-            f'font-weight="700" font-family="Space Grotesk, sans-serif">{title}</text>'
-            f'<text x="{x + 32}" y="{8 + node_h / 2 + 15}" fill="{MUTED}" font-size="10.5" '
-            f'font-family="JetBrains Mono, monospace">{sub}</text>'
-            f'</g>'
-        )
-    parts.append("</svg>")
-    with ui.column().classes("cal-panel w-full").style("padding:10px 18px;"):
-        ui.html("".join(parts))
+    with ui.row().classes("cal-panel w-full no-wrap items-center").style("padding:12px 16px; gap:0;"):
+        for i, (title, sub, color, icon, handler) in enumerate(nodes):
+            with ui.row().classes("cal-pipe-node cal-node-glow items-center no-wrap").style(
+                f"border:1.3px solid {color}8C; border-radius:11px; padding:10px 16px; gap:10px; "
+                f"flex:1; min-width:0; animation-delay:{i * 0.4}s;"
+            ).on("click", handler):
+                ui.icon(icon, size="18px").style(f"color:{color}; flex-shrink:0;")
+                with ui.column().style("gap:0; min-width:0;"):
+                    ui.label(title).classes("cal-display").style(
+                        f"font-size:12.5px; font-weight:700; color:{TEXT}; white-space:nowrap;"
+                    )
+                    ui.label(sub).style(f"font-size:10.5px; color:{MUTED}; white-space:nowrap;")
+            if i < len(nodes) - 1:
+                ui.html('<div class="cal-connector"></div>').style("flex:0 0 30px;")
 
 
 _MANUAL_OPTION = "__manual__"
@@ -488,22 +564,13 @@ def _sidebar() -> None:
     prompt = ui.textarea(placeholder="e.g. generate a dbt model for monthly revenue by region").props(
         "dense outlined dark rows=3"
     ).classes("w-full").style("font-size:13px;")
+    state["prompt_ref"] = prompt
 
     def _on_model_select(e: Any) -> None:
         value = e.value
         if value == _MANUAL_OPTION or value is None:
             model_select.set_value(None)
-            # getElement() can return either the raw DOM node or a Vue
-            # component instance (with the DOM node under .$el) depending
-            # on the element type - handle both rather than assume one.
-            ui.run_javascript(
-                f"let el = getElement({prompt.id}); "
-                f"if (el && el.$el) el = el.$el; "
-                f"if (el && typeof el.scrollIntoView === 'function') "
-                f"el.scrollIntoView({{behavior:'smooth', block:'center'}}); "
-                f"const inner = el && el.querySelector ? el.querySelector('textarea') : null; "
-                f"if (inner) inner.focus();"
-            )
+            focus_prompt_box()
             return
         _select_run(value)
 
@@ -815,9 +882,10 @@ def _main_panel() -> None:
                 count_up(value_label, delta * 100, "pct")
             ui.label("model total vs independent control sum").style(f"font-size:11px; color:{MUTED};")
 
-    ui.label("THE THREE CHECKS").classes("cal-display").style(
+    checks_label = ui.label("THE THREE CHECKS").classes("cal-display").style(
         f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em; margin-top:4px;"
     )
+    state["checks_anchor"] = checks_label
     with ui.row().classes("w-full no-wrap items-stretch").style("gap:16px;"):
         dup = report.get("duplicate_group_rows", 0) or 0
         total_rows = report.get("total_row_count", 0) or 0
@@ -851,7 +919,7 @@ def _main_panel() -> None:
             ui.label("Reconciliation: model total vs. independent control").classes("cal-display").style(
                 f"font-size:13px; font-weight:700; color:{TEXT};"
             )
-            _reconciliation_bar_chart(report.get("model_total"), report.get("reference_total"))
+            _reconciliation_bar_chart(report.get("model_total"), report.get("reference_total"), verdict != "VERIFIED")
         with ui.column().classes("cal-panel").style("padding:20px; gap:10px; flex:1;"):
             ui.label("Governance: every governed call, ever").classes("cal-display").style(
                 f"font-size:13px; font-weight:700; color:{TEXT};"
@@ -918,7 +986,7 @@ def _check_card(icon: str, title: str, passed: bool, description: str) -> None:
         ui.label(description).style(f"font-size:12px; color:{MUTED}; line-height:1.55;")
 
 
-def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Optional[float]) -> None:
+def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Optional[float], run_flagged: bool = False) -> None:
     if model_total is None or reference_total is None:
         ui.label("Reconciliation not computed for this model.").style(f"font-size:12px; color:{MUTED};")
         return
@@ -929,8 +997,12 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
         div, unit = 1e6, "$M"
     else:
         div, unit = 1e3, "$K"
-    mismatch = reference_total != 0 and abs(model_total - reference_total) / abs(reference_total) > 0.005
-    model_color = DANGER if mismatch else ACCENT
+    recon_mismatch = reference_total != 0 and abs(model_total - reference_total) / abs(reference_total) > 0.005
+    # Red whenever the RUN is flagged overall, not only when reconciliation
+    # itself mismatches - a model flagged for, say, duplicate keys but with
+    # a totals that happen to reconcile was showing a green "all good" bar
+    # here even though the run as a whole should not be trusted.
+    model_color = DANGER if (recon_mismatch or run_flagged) else ACCENT
     options = {
         "backgroundColor": "transparent",
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
@@ -947,7 +1019,7 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
         # instead of an animationDelay *function* keyed on data index.
         "series": [
             {
-                "name": "Model output", "type": "bar", "barWidth": 28, "barGap": "-100%",
+                "name": "Model output", "type": "bar", "barWidth": 42, "barGap": "-100%",
                 "data": [round(model_total / div, 3), None],
                 "itemStyle": {"color": model_color, "borderRadius": [0, 6, 6, 0], "shadowBlur": 10, "shadowColor": model_color},
                 "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
@@ -955,7 +1027,7 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
                 "animationDuration": 1300, "animationEasing": "elasticOut", "animationDelay": 0,
             },
             {
-                "name": "Independent control", "type": "bar", "barWidth": 28,
+                "name": "Independent control", "type": "bar", "barWidth": 42,
                 "data": [None, round(reference_total / div, 3)],
                 "itemStyle": {"color": TEAL, "borderRadius": [0, 6, 6, 0], "shadowBlur": 10, "shadowColor": TEAL},
                 "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
@@ -964,7 +1036,16 @@ def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Opt
             },
         ],
     }
-    chart = ui.echart(options).classes("w-full").style("height: 150px;")
+    chart = ui.echart(options).classes("w-full").style("height: 220px;")
+
+    with ui.row().classes("items-center").style("gap:14px; margin-top:-4px;"):
+        for color, label in [
+            (model_color, "model output — red means this run is flagged"),
+            (TEAL, "independent control — always the trusted reference"),
+        ]:
+            with ui.row().classes("items-center").style("gap:5px;"):
+                ui.html(f'<span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{color};"></span>')
+                ui.label(label).style(f"font-size:10.5px; color:{MUTED};")
 
     # Keeps the chart visibly alive at rest, not just animating once on
     # first paint - a slow highlight sweep alternating between the two bars.
@@ -1016,10 +1097,15 @@ def _governance_donut() -> None:
         "backgroundColor": "transparent",
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
         "tooltip": {"trigger": "item", "backgroundColor": PANEL, "borderColor": PANEL_BORDER, "textStyle": {"color": TEXT}},
-        "legend": {"orient": "vertical", "right": 4, "top": "center", "textStyle": {"color": MUTED, "fontSize": 11}, "itemWidth": 12, "itemHeight": 12},
+        "legend": {"orient": "vertical", "right": 8, "top": "center", "textStyle": {"color": MUTED, "fontSize": 12}, "itemWidth": 13, "itemHeight": 13, "itemGap": 14},
         "color": palette,
         "series": [{
-            "type": "pie", "radius": ["46%", "72%"], "center": [f"{PIE_CENTER_X * 100:.0f}%", "50%"],
+            # radius is a % of min(width, height) - the chart was 150px
+            # *tall* inside a 700+px *wide* panel, so the ring rendered
+            # tiny relative to all the empty width around it. Raising the
+            # chart height (below) is what actually fixes that; the radius
+            # bump here makes it fill that taller canvas properly too.
+            "type": "pie", "radius": ["48%", "78%"], "center": [f"{PIE_CENTER_X * 100:.0f}%", "50%"],
             "avoidLabelOverlap": True,
             "itemStyle": {"borderColor": PANEL, "borderWidth": 2},
             "label": {"show": False},
@@ -1028,14 +1114,15 @@ def _governance_donut() -> None:
             "animationType": "expansion", "animationDuration": 1100,
         }],
     }
-    with ui.element("div").style("position:relative; width:100%; height:150px;"):
-        ui.echart(options).classes("w-full").style("height: 150px;")
+    CHART_H = 220
+    with ui.element("div").style(f"position:relative; width:100%; height:{CHART_H}px;"):
+        ui.echart(options).classes("w-full").style(f"height: {CHART_H}px;")
         with ui.column().style(
-            f"position:absolute; inset:0 0 0 0; width:{PIE_CENTER_X * 200:.0f}%; height:150px; "
+            f"position:absolute; inset:0 0 0 0; width:{PIE_CENTER_X * 200:.0f}%; height:{CHART_H}px; "
             f"align-items:center; justify-content:center; gap:0; pointer-events:none;"
         ):
-            ui.label(f"{total_calls}").style(f"font-size:22px; font-weight:800; color:{TEXT}; line-height:1.1;")
-            ui.label("calls").style(f"font-size:10px; color:{MUTED};")
+            ui.label(f"{total_calls}").style(f"font-size:32px; font-weight:800; color:{TEXT}; line-height:1.1;")
+            ui.label("calls").style(f"font-size:12px; color:{MUTED};")
     ui.label(f"{total_denied} of {total_calls} calls were denied by policy.").style(f"font-size:11px; color:{MUTED};")
 
 
@@ -1129,9 +1216,13 @@ def _drift_chart(report: dict[str, Any]) -> None:
     options = {
         "backgroundColor": "transparent",
         "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
-        "grid": {"left": 58, "right": 16, "top": 48, "bottom": 44},
+        "grid": {"left": 58, "right": 16, "top": 48, "bottom": 58},
         "xAxis": {
             "type": "category", "data": periods, "boundaryGap": False,
+            "name": "order month",
+            "nameLocation": "middle",
+            "nameGap": 30,
+            "nameTextStyle": {"color": MUTED, "fontSize": 11},
             "axisLine": {"lineStyle": {"color": PANEL_BORDER}},
             "axisLabel": {"color": MUTED, "fontSize": 11},
             # The crosshair: hover anywhere on the plot and this line
@@ -1194,11 +1285,13 @@ def _governance_strip() -> None:
     # its own) grows to fit its content instead of being clamped to the
     # viewport, so the *whole strip* ran off the right edge as one long row
     # rather than clipping and scrolling inside itself.
-    with ui.column().classes("w-full").style(
+    strip_root = ui.column().classes("w-full").style(
         f"background:{PANEL}CC; backdrop-filter: blur(6px); border-top:1px solid {PANEL_BORDER}; "
         f"padding:12px 20px; gap:8px; max-height:190px; width:100%; max-width:100%; "
         f"box-sizing:border-box; overflow-x:hidden;"
-    ):
+    )
+    state["governance_anchor"] = strip_root
+    with strip_root:
         with ui.row().classes("items-center").style("gap:8px;"):
             ui.icon("shield", size="16px").style(f"color:{TEAL};")
             ui.label("GOVERNANCE — live audit trail").classes("cal-display").style(
