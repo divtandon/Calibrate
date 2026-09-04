@@ -1,0 +1,37 @@
+version: 2
+
+sources:
+  - name: tpch
+    description: >
+      The real TPC-H benchmark schema. On the duckdb target this is
+      generated locally by DuckDB's own tpch dbgen extension at scale
+      factor 1; on the snowflake target this is Snowflake's own
+      SNOWFLAKE_SAMPLE_DATA.TPCH_SF1, present on every account including
+      the free trial.
+    database: "{{ 'SNOWFLAKE_SAMPLE_DATA' if target.name == 'snowflake' else target.database }}"
+    schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'TPCH_SF1') if target.name == 'snowflake' else 'tpch_sf1' }}"
+    tables:
+      - name: orders
+        columns:
+          - name: o_orderkey
+            tests: [unique, not_null]
+          - name: o_custkey
+            tests: [not_null]
+          - name: o_orderdate
+            tests: [not_null]
+      - name: customer
+        columns:
+          - name: c_custkey
+            tests: [unique, not_null]
+      - name: nation
+        columns:
+          - name: n_nationkey
+            tests: [unique, not_null]
+      - name: region
+        columns:
+          - name: r_regionkey
+            tests: [unique, not_null]
+      - name: lineitem
+      - name: part
+      - name: partsupp
+      - name: supplier

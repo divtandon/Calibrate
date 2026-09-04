@@ -1,0 +1,17 @@
+name: "calibrate"
+version: "1.0.0"
+config-version: 2
+
+profile: "calibrate"
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  calibrate:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

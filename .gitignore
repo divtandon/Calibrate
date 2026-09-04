@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/*.duckdb
+data/*.db
+data/*.jsonl
+!data/.gitkeep
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/profiles/.user.yml
+logs/
+.DS_Store
+*.log
+node_modules/

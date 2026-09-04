@@ -1,0 +1,21 @@
+calibrate:
+  target: "{{ env_var('CALIBRATE_BACKEND', 'duckdb') }}"
+  outputs:
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'data/calibrate.duckdb') }}"
+      schema: calibrate_marts
+      threads: 4
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', '') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ACCOUNTADMIN') }}"
+      # Built models write to a separate database/schema Calibrate owns -
+      # SNOWFLAKE_SAMPLE_DATA itself is a shared, read-only imported
+      # database and dbt cannot create tables there.
+      database: "{{ env_var('SNOWFLAKE_TARGET_DATABASE', 'CALIBRATE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
+      schema: "{{ env_var('SNOWFLAKE_TARGET_SCHEMA', 'CALIBRATE_MARTS') }}"
+      threads: 4

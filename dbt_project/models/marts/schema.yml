@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: monthly_revenue_by_region
+    description: One row per (region, order_month), the grain the agent's generated models are validated against.
+    columns:
+      - name: region
+        tests: [not_null]
+      - name: order_month
+        tests: [not_null]
+      - name: total_revenue
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                strictly: false

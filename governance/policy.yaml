@@ -1,0 +1,37 @@
+# Calibrate governance policy.
+# Every MCP tool call is checked against this file before it is allowed to
+# execute. Edit this to change what the agent is permitted to do without
+# touching any Python code.
+
+default_actor: calibrate-agent
+
+tools:
+  get_schema:
+    allowed_actors: ["calibrate-agent", "demo-cli"]
+    max_calls_per_session: 100
+
+  get_historical_baseline:
+    allowed_actors: ["calibrate-agent", "demo-cli"]
+    max_calls_per_session: 100
+
+  run_generated_model:
+    allowed_actors: ["calibrate-agent", "demo-cli", "validation-engine"]
+    max_calls_per_session: 50
+    # Generated models may only read data. Any of these keywords appearing
+    # in the SQL (outside of a string/comment) blocks the call before it
+    # ever reaches the database.
+    denied_sql_keywords:
+      - "DROP "
+      - "DELETE "
+      - "TRUNCATE "
+      - "ALTER "
+      - "INSERT "
+      - "UPDATE "
+      - "GRANT "
+      - "CREATE USER"
+      - "CREATE ROLE"
+    max_rows_returned: 50000
+
+  flag_output_anomaly:
+    allowed_actors: ["calibrate-agent", "demo-cli", "validation-engine"]
+    max_calls_per_session: 200

@@ -1,0 +1,11 @@
+anthropic>=0.40.0
+mcp<2
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+nicegui>=1.4.0
+pydantic>=2.7.0
+duckdb>=1.1.0
+dbt-core>=1.8.0
+dbt-duckdb>=1.8.0
+dbt-snowflake>=1.8.0
+snowflake-connector-python>=3.12.0

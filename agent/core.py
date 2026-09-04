@@ -1,0 +1,132 @@
+"""The generation agent: takes a natural-language request, grounds itself in
+the real schema via governed tool calls, and produces one real dbt model
+SQL file. This is the Phase 1 wiring - a manual Anthropic tool-use loop
+calling the exact same governed functions mcp_server/server.py exposes over
+MCP, so every call the agent makes is policy-checked and audit-logged
+identically either way.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+
+from agent.prompts import SYSTEM_PROMPT, TOOL_DEFINITIONS
+from governance.policy import reset_session_counters
+from mcp_server import tools as t
+
+load_dotenv()
+
+_MODEL = os.environ.get("CALIBRATE_MODEL", "claude-sonnet-5")
+_MAX_TURNS = 8
+
+
+@dataclass
+class GenerationResult:
+    sql: str
+    model_name: str
+    turns: int
+    tool_calls: list[dict[str, Any]]
+
+
+def _dispatch_tool(name: str, tool_input: dict[str, Any]) -> Any:
+    actor = "calibrate-agent"
+    if name == "get_schema":
+        return t.get_schema(tool_input["table"], actor=actor)
+    if name == "get_historical_baseline":
+        return t.get_historical_baseline(
+            tool_input["table"], tool_input["metric"], tool_input.get("period", "baseline"), actor=actor
+        )
+    if name == "run_generated_model":
+        return t.run_generated_model(tool_input["sql"], actor=actor)
+    raise ValueError(f"Unknown tool '{name}'")
+
+
+def _extract_sql(text: str) -> str | None:
+    match = re.search(r"```sql\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _slugify(prompt: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower()).strip("_")
+    return slug[:60] or "generated_model"
+
+
+def generate_model(prompt: str, save_dir: str = "examples") -> GenerationResult:
+    """Run the full agent loop for one natural-language request and save the
+    resulting dbt model to save_dir/<slug>.sql. Requires ANTHROPIC_API_KEY.
+    """
+    import anthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not set. Add it to .env (see .env.example) - "
+            "get one at https://console.anthropic.com/settings/keys"
+        )
+
+    reset_session_counters()
+    client = anthropic.Anthropic(api_key=api_key)
+
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+    tool_calls: list[dict[str, Any]] = []
+    final_text = ""
+
+    for turn in range(1, _MAX_TURNS + 1):
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=4096,
+            system=SYSTEM_PROMPT,
+            tools=TOOL_DEFINITIONS,
+            messages=messages,
+        )
+
+        assistant_content = [block.model_dump() for block in response.content]
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+        text_blocks = [b.text for b in response.content if b.type == "text"]
+        final_text = "\n".join(text_blocks)
+
+        if not tool_use_blocks:
+            break
+
+        tool_results = []
+        for block in tool_use_blocks:
+            try:
+                result = _dispatch_tool(block.name, block.input)
+                content = str(result)
+                is_error = False
+            except Exception as exc:  # noqa: BLE001 - surfaced back to the model as a tool error
+                content = f"Error: {exc}"
+                is_error = True
+            tool_calls.append({"tool": block.name, "input": block.input, "error": is_error})
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": content,
+                    "is_error": is_error,
+                }
+            )
+        messages.append({"role": "user", "content": tool_results})
+    else:
+        raise RuntimeError(f"Agent did not finish within {_MAX_TURNS} turns.")
+
+    sql = _extract_sql(final_text)
+    if not sql:
+        raise RuntimeError(f"Agent finished without producing a ```sql block. Last response:\n{final_text}")
+
+    model_name = _slugify(prompt)
+    out_path = Path(save_dir) / f"{model_name}.sql"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(sql + "\n", encoding="utf-8")
+
+    return GenerationResult(sql=sql, model_name=model_name, turns=turn, tool_calls=tool_calls)
