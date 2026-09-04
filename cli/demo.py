@@ -96,10 +96,11 @@ def cmd_validate(args: argparse.Namespace) -> None:
 
 def cmd_run_demo(args: argparse.Namespace) -> None:
     """Phase 0-2 checkpoint in one command: real schema call, real baseline
-    call, then validate the correct example and the deliberately-broken one.
+    call, then validate every model in examples/registry.py.
     """
     from mcp_server.tools import get_schema, get_historical_baseline
     from validation.drift_report import run_and_report
+    from examples.registry import DEMO_MODELS
 
     print("=== Phase 0: real tool call -> real schema ===")
     schema = get_schema("orders", actor="demo-cli")
@@ -111,26 +112,18 @@ def cmd_run_demo(args: argparse.Namespace) -> None:
     print(f"o_totalprice baseline period: {baseline['row_count']:,} rows, mean={baseline['mean']:.2f}, "
           f"stddev={baseline['stddev']:.2f}")
 
-    print()
-    print("=== Phase 2: validate the correct generated model ===")
-    good_sql = Path("examples/monthly_revenue_by_region.sql").read_text(encoding="utf-8")
-    good = run_and_report(
-        "monthly_revenue_by_region", good_sql, period_col="order_month", metric_col="total_revenue",
-        dimension_cols=["region"], sql_path="examples/monthly_revenue_by_region.sql",
-    )
-    print(f"verdict: {good['verdict']}  (model total {good['model_total']:,.2f} vs reference "
-          f"{good['reference_total']:,.2f})")
-
-    print()
-    print("=== Phase 2: validate the deliberately-broken model ===")
-    bad_sql = Path("examples/monthly_revenue_by_region_broken.sql").read_text(encoding="utf-8")
-    bad = run_and_report(
-        "monthly_revenue_by_region_broken", bad_sql, period_col="order_month", metric_col="total_revenue",
-        dimension_cols=["region"], sql_path="examples/monthly_revenue_by_region_broken.sql",
-    )
-    print(f"verdict: {bad['verdict']}")
-    for flag in bad["flags"]:
-        print(f"  - {flag}")
+    for m in DEMO_MODELS:
+        print()
+        print(f"=== Phase 2: validate {m['name']} ===")
+        sql = Path(m["path"]).read_text(encoding="utf-8")
+        report = run_and_report(
+            m["name"], sql, period_col=m["period_col"], metric_col=m["metric_col"],
+            dimension_cols=m["dimension_cols"], sql_path=m["path"],
+        )
+        print(f"verdict: {report['verdict']}  (model total {report.get('model_total', 0):,.2f} vs reference "
+              f"{report.get('reference_total', 0):,.2f})")
+        for flag in report["flags"]:
+            print(f"  - {flag}")
 
 
 def cmd_audit(args: argparse.Namespace) -> None:

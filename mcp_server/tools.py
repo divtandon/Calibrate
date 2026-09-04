@@ -106,7 +106,7 @@ def _resolve_dbt_sql(sql: str) -> str:
 
 
 @governed("run_generated_model")
-def run_generated_model(sql: str, row_limit: int = 50000) -> dict[str, Any]:
+def run_generated_model(sql: str, row_limit: int = 100_000) -> dict[str, Any]:
     """Execute a generated dbt model's SQL against the real backend and
     return its actual output. governance.policy blocks this before it runs
     if the SQL contains anything but a read (DROP/DELETE/INSERT/etc).

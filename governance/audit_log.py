@@ -95,3 +95,27 @@ def get_recent_anomaly_flags(limit: int = 50) -> list[dict[str, Any]]:
             "SELECT * FROM anomaly_flags ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_call_counts_by_tool() -> list[dict[str, Any]]:
+    """Real breakdown of every governed call ever made, grouped by tool -
+    what the dashboard's governance donut chart renders."""
+    init_db()
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT tool, COUNT(*) AS calls, SUM(allowed) AS allowed, "
+            "SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied "
+            "FROM audit_log GROUP BY tool ORDER BY calls DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_allow_deny_totals() -> dict[str, int]:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT SUM(allowed) AS allowed, SUM(CASE WHEN allowed = 0 THEN 1 ELSE 0 END) AS denied, "
+            "COUNT(*) AS total FROM audit_log"
+        ).fetchone()
+        return {"allowed": row[0] or 0, "denied": row[1] or 0, "total": row[2] or 0}

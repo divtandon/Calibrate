@@ -149,6 +149,29 @@ def _inject_style() -> None:
         50% {{ filter: drop-shadow(0 0 6px rgba(57,230,160,0.45)); }}
       }}
 
+      .cal-particle {{
+        position: fixed; border-radius: 50%; pointer-events: none; z-index: 0;
+        animation-name: cal-float; animation-timing-function: ease-in-out; animation-iteration-count: infinite;
+      }}
+      @keyframes cal-float {{
+        0%   {{ transform: translate(0,0); }}
+        25%  {{ transform: translate(26px,-34px); }}
+        50%  {{ transform: translate(-16px,-62px); }}
+        75%  {{ transform: translate(-34px,-18px); }}
+        100% {{ transform: translate(0,0); }}
+      }}
+
+      .cal-panel {{ transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }}
+      .cal-panel:hover {{ transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0,0,0,0.35); }}
+
+      .cal-check-card {{
+        background: {PANEL}; border: 1px solid {PANEL_BORDER}; border-radius: 12px; padding: 16px 18px;
+        transition: transform .18s ease, box-shadow .18s ease;
+      }}
+      .cal-check-card:hover {{ transform: translateY(-2px); }}
+      .cal-check-card.pass {{ border-color: rgba(57,230,160,0.35); }}
+      .cal-check-card.fail {{ border-color: rgba(255,93,120,0.45); box-shadow: 0 0 22px rgba(255,93,120,0.08); }}
+
       ::-webkit-scrollbar {{ width: 9px; height: 9px; }}
       ::-webkit-scrollbar-thumb {{ background: {PANEL_BORDER}; border-radius: 5px; }}
     </style>
@@ -200,12 +223,34 @@ def load_audit(limit: int = 40) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------- app --
 
+def _particle_field(n: int = 16) -> None:
+    import random
+
+    random.seed(7)  # stable across reloads - motion without visual jitter on refresh
+    colors = [ACCENT, TEAL, VIOLET]
+    parts = ['<div class="cal-bg"></div><div class="cal-scanline"></div>']
+    for i in range(n):
+        size = random.randint(3, 7)
+        left = random.uniform(2, 96)
+        top = random.uniform(6, 92)
+        color = random.choice(colors)
+        dur = random.uniform(14, 26)
+        delay = random.uniform(0, 10)
+        opacity = random.uniform(0.25, 0.55)
+        parts.append(
+            f'<div class="cal-particle" style="left:{left}vw; top:{top}vh; width:{size}px; height:{size}px; '
+            f'background:{color}; opacity:{opacity}; animation-duration:{dur}s; animation-delay:-{delay}s; '
+            f'box-shadow:0 0 {size * 2}px {color};"></div>'
+        )
+    ui.html("".join(parts))
+
+
 @ui.page("/")
 def index() -> None:
     _inject_style()
     ui.dark_mode().enable()
     ui.colors(primary=ACCENT)
-    ui.html('<div class="cal-bg"></div><div class="cal-scanline"></div>')
+    _particle_field()
 
     with ui.column().classes("w-full h-screen no-wrap").style(f"background:transparent; padding:0; gap:0; position:relative; z-index:2;"):
         _header()
@@ -215,10 +260,42 @@ def index() -> None:
                 f"border-right:1px solid {PANEL_BORDER}; padding:16px; gap:16px; overflow-y:auto;"
             ):
                 _sidebar()
-            with ui.column().classes("flex-grow").style("height:100%; padding:20px; gap:16px; overflow-y:auto;"):
+            with ui.column().classes("flex-grow").style("height:100%; padding:20px; gap:18px; overflow-y:auto;"):
                 _pipeline_diagram()
+                _explainer_banner()
                 _main_panel()
         _governance_strip()
+
+
+def _explainer_banner() -> None:
+    """A random visitor should be able to read this and understand the
+    whole point of the project without reading a line of code. Everything
+    it claims is backed by the check cards and charts directly below it.
+    """
+    with ui.row().classes("cal-panel w-full no-wrap items-start").style(
+        f"padding:18px 22px; gap:18px; border-color:rgba(57,230,160,0.25);"
+    ):
+        ui.icon("psychology", size="28px").style(f"color:{ACCENT}; margin-top:2px; flex-shrink:0;")
+        with ui.column().style("gap:6px;"):
+            ui.label("Why this exists").classes("cal-display").style(
+                f"font-size:14px; font-weight:700; color:{TEXT};"
+            )
+            ui.label(
+                "An AI agent can write SQL that references only real columns, executes without error, and still "
+                "quietly returns the wrong answer - a bad join, a missing GROUP BY, a metric that drifts. Schema "
+                "grounding alone can't catch that; only checking the actual output can. Below, an agent generates "
+                "a dbt model against a real TPC-H dataset, and three independent statistical checks decide whether "
+                "to trust it - not whether it ran, whether its numbers hold up."
+            ).style(f"font-size:12.5px; color:{MUTED}; line-height:1.6; max-width:980px;")
+            with ui.row().classes("items-center").style("gap:18px; margin-top:2px;"):
+                for icon, label in [
+                    ("fingerprint", "Uniqueness — is each row's key actually unique?"),
+                    ("balance", "Reconciliation — does the total match an independent control sum?"),
+                    ("show_chart", "Drift — does recent output match the historical shape?"),
+                ]:
+                    with ui.row().classes("items-center").style("gap:6px;"):
+                        ui.icon(icon, size="14px").style(f"color:{TEAL};")
+                        ui.label(label).style(f"font-size:11.5px; color:{MUTED};")
 
 
 def _header() -> None:
@@ -294,7 +371,8 @@ def _sidebar() -> None:
     search = ui.input(placeholder="Search models...").props("dense outlined dark").classes("w-full").style(
         f"--q-primary:{ACCENT}; font-size:13px;"
     )
-    _catalog_list(search.value if search else "")
+    with ui.column().style("max-height:280px; overflow-y:auto; width:100%; gap:0;"):
+        _catalog_list(search.value if search else "")
     search.on("update:model-value", lambda e: _catalog_list.refresh(e.args or ""))
 
     ui.separator().style(f"background:{PANEL_BORDER};")
@@ -410,21 +488,23 @@ def _sidebar() -> None:
             "cal-console-line ok",
         )
 
-        for name, path in [
-            ("monthly_revenue_by_region", "examples/monthly_revenue_by_region.sql"),
-            ("monthly_revenue_by_region_broken", "examples/monthly_revenue_by_region_broken.sql"),
-        ]:
-            sql = Path(path).read_text(encoding="utf-8")
-            await _print(f"$ calibrate validate {path}", "cal-console-line head")
-            report = await run.io_bound(run_and_report, name, sql, "order_month", "total_revenue", ["region"], path)
+        from examples.registry import DEMO_MODELS
+
+        for m in DEMO_MODELS:
+            sql = Path(m["path"]).read_text(encoding="utf-8")
+            await _print(f"$ calibrate validate {m['path']}", "cal-console-line head")
+            report = await run.io_bound(
+                run_and_report, m["name"], sql, m["period_col"], m["metric_col"], m["dimension_cols"], m["path"],
+            )
             for text, cls in _report_lines(report):
                 await _print(text, cls)
-                await asyncio.sleep(0.12)
-        await _print("done - see catalog", "cal-console-line dim")
+                await asyncio.sleep(0.08)
+            _catalog_list.refresh("")
+        await _print(f"done - {len(DEMO_MODELS)} models validated, see catalog", "cal-console-line dim")
         _catalog_list.refresh("")
         _main_panel.refresh()
 
-    ui.button("Run Phase 0-2 Demo", on_click=do_full_demo).props("outline").classes("w-full").style(
+    ui.button(f"Run Full Demo (5 models)", on_click=do_full_demo).props("outline").classes("w-full").style(
         f"color:{TEAL}; border-color:{TEAL}; font-size:13px;"
     )
 
@@ -495,12 +575,20 @@ def _main_panel() -> None:
         return
     report = run["report"]
 
-    ui.label(f"DASHBOARDS  ›  {run['model_name']}").style(f"font-size:12px; color:{MUTED}; letter-spacing:.05em;")
+    with ui.row().classes("w-full items-center"):
+        ui.label(f"DASHBOARDS  ›  {run['model_name']}").style(f"font-size:12px; color:{MUTED}; letter-spacing:.05em;")
+        ui.space()
+        verdict = run["verdict"]
+        overall_color = ACCENT if verdict == "VERIFIED" else DANGER
+        badge(
+            f"{'✓ TRUSTED' if verdict == 'VERIFIED' else '✕ DO NOT SHIP'} — {verdict}",
+            "#04120c" if verdict == "VERIFIED" else "#2a0a10", overall_color,
+        )
 
     with ui.row().classes("w-full no-wrap").style("gap:16px;"):
-        _stat_tile("ROW COUNT DELTA", report.get("row_count_delta_pct"), "pct", 0.25)
-        _stat_tile("NULL RATE VARIANCE", report.get("null_rate_variance"), "pct", 0.02)
-        _stat_tile("DISTRIBUTION DRIFT", report.get("distribution_drift_sigma"), "sigma", 3.0)
+        _stat_tile("ROW COUNT DELTA", report.get("row_count_delta_pct"), "pct", 0.25, "rows/period, recent vs historical")
+        _stat_tile("NULL RATE VARIANCE", report.get("null_rate_variance"), "pct", 0.02, "missing values, recent vs historical")
+        _stat_tile("DISTRIBUTION DRIFT", report.get("distribution_drift_sigma"), "sigma", 3.0, "z-score vs baseline mean")
         with ui.column().classes("cal-panel").style("padding:18px; gap:4px; min-width:220px;"):
             ui.label("RECONCILIATION").style(f"font-size:12px; color:{MUTED}; letter-spacing:.06em; font-weight:700;")
             delta = report.get("reconciliation_delta_pct")
@@ -510,9 +598,50 @@ def _main_panel() -> None:
             )
             if delta is not None:
                 count_up(value_label, delta * 100, "pct")
-            ui.label(f"model {report.get('model_total', 0):,.0f} vs ref {report.get('reference_total', 0):,.0f}").style(
-                f"font-size:12px; color:{MUTED};"
+            ui.label("model total vs independent control sum").style(f"font-size:11px; color:{MUTED};")
+
+    ui.label("THE THREE CHECKS, IN PLAIN ENGLISH").classes("cal-display").style(
+        f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em; margin-top:4px;"
+    )
+    with ui.row().classes("w-full no-wrap").style("gap:16px;"):
+        dup = report.get("duplicate_group_rows", 0) or 0
+        total_rows = report.get("total_row_count", 0) or 0
+        key_desc = ", ".join(report.get("dimension_cols") or ["region"]) + f", {report.get('period_col', 'month')}"
+        _check_card(
+            "fingerprint", "UNIQUENESS", dup == 0,
+            f"{total_rows - dup:,} of {total_rows:,} rows have a one-of-a-kind ({key_desc}) key." if dup == 0
+            else f"{dup:,} row(s) share a ({key_desc}) key that should be unique - the GROUP BY is likely missing a column.",
+        )
+        ref_total = report.get("reference_total")
+        model_total = report.get("model_total")
+        recon_ok = delta is None or delta <= 0.005
+        _check_card(
+            "balance", "RECONCILIATION", recon_ok,
+            (f"Model total ${model_total:,.0f} matches the independent control sum exactly." if recon_ok and delta == 0
+             else f"Model total ${model_total:,.0f} is within {(delta or 0):.2%} of the ${ref_total:,.0f} control sum." if recon_ok
+             else f"Model total ${model_total:,.0f} is {(delta or 0):+.1%} off the ${ref_total:,.0f} control sum - a join is likely fanning out rows.")
+            if ref_total is not None else "Reconciliation not applicable for this model.",
+        )
+        sigma = report.get("distribution_drift_sigma")
+        drift_ok = sigma is None or abs(sigma) <= 3.0
+        _check_card(
+            "show_chart", "HISTORICAL DRIFT", drift_ok,
+            f"Recent-period average is {sigma:+.2f}σ from the historical baseline - within the ±3.0σ normal range." if sigma is not None and drift_ok
+            else f"Recent-period average is {sigma:+.2f}σ from the historical baseline - outside the ±3.0σ normal range." if sigma is not None
+            else "Not enough periods to compute drift.",
+        )
+
+    with ui.row().classes("w-full no-wrap").style("gap:16px; align-items:stretch;"):
+        with ui.column().classes("cal-panel").style("padding:20px; gap:10px; flex:1;"):
+            ui.label("Reconciliation: model total vs. independent control").classes("cal-display").style(
+                f"font-size:13px; font-weight:700; color:{TEXT};"
             )
+            _reconciliation_bar_chart(report.get("model_total"), report.get("reference_total"))
+        with ui.column().classes("cal-panel").style("padding:20px; gap:10px; flex:1;"):
+            ui.label("Governance: every governed call, ever").classes("cal-display").style(
+                f"font-size:13px; font-weight:700; color:{TEXT};"
+            )
+            _governance_donut()
 
     with ui.column().classes("cal-panel w-full").style("padding:20px; gap:12px;"):
         with ui.row().classes("items-center w-full"):
@@ -520,11 +649,13 @@ def _main_panel() -> None:
                 f"font-size:14px; font-weight:700; color:{TEXT};"
             )
             ui.space()
-            verdict = run["verdict"]
-            badge(verdict, "#04120c" if verdict == "VERIFIED" else "#2a0a10", ACCENT if verdict == "VERIFIED" else DANGER)
+            badge(verdict, "#04120c" if verdict == "VERIFIED" else "#2a0a10", overall_color)
         _drift_chart(report)
 
     if run["flags"]:
+        ui.label("FAILURE DETAIL").classes("cal-display").style(
+            f"font-size:11px; font-weight:700; color:{MUTED}; letter-spacing:.1em;"
+        )
         with ui.column().classes("w-full").style("gap:8px;"):
             for flag in run["flags"]:
                 with ui.row().classes("w-full no-wrap items-start").style(
@@ -537,7 +668,7 @@ def _main_panel() -> None:
         ui.code(report.get("resolved_sql", ""), language="sql").classes("w-full")
 
 
-def _stat_tile(label: str, raw_value: Optional[float], mode: str, threshold: float) -> None:
+def _stat_tile(label: str, raw_value: Optional[float], mode: str, threshold: float, subtitle: str = "") -> None:
     flagged = raw_value is not None and abs(raw_value) > threshold
     color = DANGER if flagged else ACCENT
     with ui.column().classes("cal-panel").style("padding:18px; gap:4px; min-width:220px;"):
@@ -548,8 +679,100 @@ def _stat_tile(label: str, raw_value: Optional[float], mode: str, threshold: flo
             count_up(value_label, raw_value * 100 if mode == "pct" else raw_value, mode)
         if flagged:
             badge("FLAGGED", "#2a0a10", DANGER)
+        elif subtitle:
+            ui.label(subtitle).style(f"font-size:11px; color:{MUTED};")
         else:
             ui.label("within tolerance").style(f"font-size:12px; color:{MUTED};")
+
+
+def _check_card(icon: str, title: str, passed: bool, description: str) -> None:
+    color = ACCENT if passed else DANGER
+    with ui.column().classes(f"cal-check-card {'pass' if passed else 'fail'}").style("flex:1; gap:8px;"):
+        with ui.row().classes("items-center w-full").style("gap:10px;"):
+            ui.icon(icon, size="18px").style(f"color:{color};")
+            ui.label(title).classes("cal-display").style(f"font-size:12.5px; font-weight:700; color:{TEXT}; letter-spacing:.03em;")
+            ui.space()
+            ui.icon("check_circle" if passed else "cancel", size="18px").style(f"color:{color};")
+        ui.label(description).style(f"font-size:12px; color:{MUTED}; line-height:1.55;")
+
+
+def _reconciliation_bar_chart(model_total: Optional[float], reference_total: Optional[float]) -> None:
+    if model_total is None or reference_total is None:
+        ui.label("Reconciliation not computed for this model.").style(f"font-size:12px; color:{MUTED};")
+        return
+    max_abs = max(abs(model_total), abs(reference_total), 1)
+    if max_abs >= 1e9:
+        div, unit = 1e9, "$B"
+    elif max_abs >= 1e6:
+        div, unit = 1e6, "$M"
+    else:
+        div, unit = 1e3, "$K"
+    mismatch = reference_total != 0 and abs(model_total - reference_total) / abs(reference_total) > 0.005
+    model_color = DANGER if mismatch else ACCENT
+    options = {
+        "backgroundColor": "transparent",
+        "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
+        "grid": {"left": 110, "right": 60, "top": 10, "bottom": 10},
+        "xAxis": {"type": "value", "axisLine": {"show": False}, "splitLine": {"lineStyle": {"color": PANEL_BORDER}},
+                  "axisLabel": {"color": MUTED, "fontSize": 11}},
+        "yAxis": {"type": "category", "data": ["Model output", "Independent control"],
+                  "axisLine": {"lineStyle": {"color": PANEL_BORDER}}, "axisLabel": {"color": MUTED, "fontSize": 12}},
+        "series": [{
+            "type": "bar", "barWidth": 28,
+            "data": [
+                {"value": round(model_total / div, 3), "itemStyle": {"color": model_color, "borderRadius": [0, 6, 6, 0]}},
+                {"value": round(reference_total / div, 3), "itemStyle": {"color": TEAL, "borderRadius": [0, 6, 6, 0]}},
+            ],
+            "label": {"show": True, "position": "right", "color": MUTED, "fontSize": 11, "formatter": "{c} " + unit},
+            "animationDuration": 1100, "animationEasing": "cubicOut",
+        }],
+    }
+    ui.echart(options).classes("w-full").style("height: 150px;")
+
+
+def _governance_donut() -> None:
+    from governance.audit_log import get_call_counts_by_tool
+
+    rows = get_call_counts_by_tool()
+    if not rows:
+        ui.label("No governed calls logged yet.").style(f"font-size:12px; color:{MUTED};")
+        return
+    palette = [ACCENT, TEAL, VIOLET, AMBER, DANGER]
+    data = [{"name": r["tool"], "value": r["calls"]} for r in rows]
+    total_denied = sum(r["denied"] for r in rows)
+    total_calls = sum(r["calls"] for r in rows)
+    # PIE_CENTER_X is where the pie's center sits, as a fraction of the
+    # chart's full width. An overlay box spanning [0, 2*PIE_CENTER_X] has
+    # its own natural center exactly on top of the pie's center - plain
+    # CSS flex-centering inside that box, instead of guessing ECharts
+    # `graphic` pixel/percent offsets against a layout that also has a
+    # legend eating into the canvas (which is what kept misaligning it).
+    PIE_CENTER_X = 0.34
+    options = {
+        "backgroundColor": "transparent",
+        "textStyle": {"color": TEXT, "fontFamily": "JetBrains Mono, monospace"},
+        "tooltip": {"trigger": "item", "backgroundColor": PANEL, "borderColor": PANEL_BORDER, "textStyle": {"color": TEXT}},
+        "legend": {"orient": "vertical", "right": 4, "top": "center", "textStyle": {"color": MUTED, "fontSize": 11}, "itemWidth": 12, "itemHeight": 12},
+        "color": palette,
+        "series": [{
+            "type": "pie", "radius": ["46%", "72%"], "center": [f"{PIE_CENTER_X * 100:.0f}%", "50%"],
+            "avoidLabelOverlap": True,
+            "itemStyle": {"borderColor": PANEL, "borderWidth": 2},
+            "label": {"show": False},
+            "emphasis": {"scale": True, "scaleSize": 6},
+            "data": data,
+            "animationType": "expansion", "animationDuration": 1100,
+        }],
+    }
+    with ui.element("div").style("position:relative; width:100%; height:150px;"):
+        ui.echart(options).classes("w-full").style("height: 150px;")
+        with ui.column().style(
+            f"position:absolute; inset:0 0 0 0; width:{PIE_CENTER_X * 200:.0f}%; height:150px; "
+            f"align-items:center; justify-content:center; gap:0; pointer-events:none;"
+        ):
+            ui.label(f"{total_calls}").style(f"font-size:22px; font-weight:800; color:{TEXT}; line-height:1.1;")
+            ui.label("calls").style(f"font-size:10px; color:{MUTED};")
+    ui.label(f"{total_denied} of {total_calls} calls were denied by policy.").style(f"font-size:11px; color:{MUTED};")
 
 
 def _drift_chart(report: dict[str, Any]) -> None:
@@ -568,7 +791,8 @@ def _drift_chart(report: dict[str, Any]) -> None:
     except Exception:
         cols, rows, idx = [], [], {}
 
-    period_col, metric_col = "order_month", "total_revenue"
+    period_col = report.get("period_col", "order_month")
+    metric_col = report.get("metric_col", "total_revenue")
     series: dict[str, float] = {}
     if period_col in idx and metric_col in idx:
         for r in rows:

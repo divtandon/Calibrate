@@ -53,7 +53,12 @@ def run_and_report(
     columns = exec_result["columns"]
     rows = exec_result["rows"]
 
-    reference_total = reference_orders_revenue_total() if use_reconciliation else None
+    # A truncated result is a partial sum, not a real one - reconciling
+    # against it would produce a "mismatch" that's really just missing
+    # rows, not a join fan-out. Skip the check rather than report a
+    # misleading reason.
+    truncated = exec_result.get("truncated", False)
+    reference_total = reference_orders_revenue_total() if (use_reconciliation and not truncated) else None
 
     result = check_model_output(
         columns=columns,
@@ -63,6 +68,12 @@ def run_and_report(
         dimension_cols=dimension_cols,
         reference_total=reference_total,
     )
+    if truncated:
+        result.flags.append(
+            f"result_truncated: model returned more than {len(rows):,} rows and was truncated for validation - "
+            f"reconciliation was skipped because a partial sum isn't a real total."
+        )
+        result.verdict = "FLAGGED"
 
     if result.verdict == "FLAGGED":
         for f in result.flags:
@@ -72,6 +83,9 @@ def run_and_report(
         "model_name": model_name,
         "backend": exec_result["backend"],
         "resolved_sql": exec_result["resolved_sql"],
+        "period_col": period_col,
+        "metric_col": metric_col,
+        "dimension_cols": dimension_cols,
         **result.to_dict(),
     }
     results_store.save_run(model_name, sql_path or "", result.verdict, result.flags, report)

@@ -30,7 +30,7 @@ tools:
       - "GRANT "
       - "CREATE USER"
       - "CREATE ROLE"
-    max_rows_returned: 50000
+    max_rows_returned: 100000
 
   flag_output_anomaly:
     allowed_actors: ["calibrate-agent", "demo-cli", "validation-engine"]
